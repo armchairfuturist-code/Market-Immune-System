@@ -28,8 +28,12 @@ Define a constant `ASSET_UNIVERSE`. It must include exactly these liquid tickers
 *   **Lookback:** Rolling 365-day window for covariance `S`.
 *   **Covariance Hardening:** Use **Ledoit-Wolf Shrinkage** (via `pypfopt.risk_models.CovarianceShrinkage`). Do NOT use standard `numpy.cov` to avoid singular matrices.
 *   **Formula:** $D_t = \sqrt{ (r_t - \mu) \Sigma^{-1} (r_t - \mu)' }$
-*   **Normalization:** Convert $D_t$ to a **0-1000 Score** using the **Chi-Squared Cumulative Distribution Function (CDF)** where degrees of freedom = number of assets.
-    *   `Score = stats.chi2.cdf(squared_distance, df=N_assets) * 1000`
+*   **Scale Normalization (0-1000 Calibrated):**
+    1.  Calculate the **99th Percentile ($P_{99}$)** of the trailing 365-day raw $D_t$ values.
+    2.  **Anchor Point:** We define the "Extreme/Critical" threshold as **370** (which is 37% of the 0-1000 scale).
+    3.  **Formula:** `Final_Score = (Raw_Dt / P99) * 370`.
+    4.  **Cap:** `Final_Score = min(Final_Score, 1000)`.
+    *   *Result:* A standard "bad day" (99th percentile) will hit exactly 370. A "Black Swan" (3x a bad day) will hit ~1000.
 *   **Smoothing:** Apply a 3-Day EMA to the final Score.
 
 ### Metric B: Absorption Ratio (Systemic Fragility)
@@ -59,23 +63,23 @@ Define a constant `ASSET_UNIVERSE`. It must include exactly these liquid tickers
 ## 3. Signal Logic (The Composite "Buy Low" Detector)
 Implement a function `generate_signal(spx_return, turbulence_score, absorption_score, hurst, liquidity_z)`:
 
-**Composite Signal States:**
+**Composite Signal States (Based on 0-1000 Calibrated Scale):**
 1.  **CONDITION: FRAGILE (The Bubble)**
     *   **Logic:** `Absorption > 800` **OR** (`Hurst > 0.75` AND `Liquidity_Z > 1.5`).
     *   **Message:** "WARNING: Fragile Structure. Crowded Trade + Thin Liquidity."
     *   **Action:** Cash preservation (Code: ORANGE).
 2.  **CONDITION: CRASH (The Event)**
-    *   **Logic:** `Turbulence > 850` **AND** `Liquidity_Z > 2.0`.
+    *   **Logic:** `Turbulence > 370` (Extreme) **AND** `Liquidity_Z > 2.0`.
     *   **Message:** "CRASH: Liquidity Evaporation Event."
     *   **Action:** DO NOT CATCH THE KNIFE (Code: BLACK).
 3.  **CONDITION: DIVERGENCE (The Trap)**
-    *   **Logic:** `SPX_Price > 0` (Green Day) **AND** `Turbulence > 750`.
+    *   **Logic:** `SPX_Price > 50-day SMA` (Uptrend) **AND** `Turbulence > 180` (Warning).
     *   **Message:** "DIVERGENCE: Market rising on broken structure."
     *   **Action:** CAUTION (Code: RED).
 4.  **CONDITION: OPPORTUNITY (The Buy Signal)**
     *   **Logic:**
-        *   `Turbulence` *was* > 850 (recent panic).
-        *   `Turbulence` is now < 800 (calming).
+        *   `Turbulence` *was* > 370 (recent panic).
+        *   `Turbulence` is now < 300 (calming).
         *   `Liquidity_Z` < 1.0 (Market Makers have returned).
         *   `Hurst` < 0.5 (Mean Reversion active).
     *   **Message:** "BUY SIGNAL: Stress clearing, Liquidity returning."
@@ -90,15 +94,17 @@ The layout must be modern and dark-mode friendly.
     *   List of Top 5 contributing assets to today's Turbulence (calculated via Partial Mahalanobis contribution).
 2.  **Main Panel - Header:**
     *   Four columns metric display:
-        1.  **Turbulence Score** (0-1000)
+        1.  **Turbulence Score** (0-1000, Normalized)
         2.  **Absorption Ratio** (0-1000)
         3.  **Liquidity Z-Score** (Float)
         4.  **Signal Status** (Colorful text based on Section 3).
 3.  **Main Panel - Charts:**
     *   **Chart 1:** "Market Health Monitor" (Plotly). Dual-axis chart.
-        *   Left Axis: SPY Cumulative Return (Line).
-        *   Right Axis: Turbulence Score (Area/Shadow).
-        *   Horizontal Line at 750 (Warning Threshold).
+        *   **Left Axis (Primary):** Turbulence Score (Area/Shadow). Range Fixed `[0, 1000]`.
+        *   **Right Axis (Secondary):** SPX Price (Line) and SPX 50-day SMA (Dashed Line).
+        *   **Threshold Line 1 (Yellow/Dashed):** Static horizontal line at **180**. Label: "Warning (18%)".
+        *   **Threshold Line 2 (Red/Dashed):** Static horizontal line at **370**. Label: "Critical (37%)".
+        *   **Overlay:** Green vertical shading when `Turbulence > 180` AND `SPX > 50-day SMA`.
     *   **Chart 2:** "Liquidity Stress Gauge" (Plotly Line Chart).
         *   X-Axis: Date.
         *   Y-Axis: Amihud Z-Score.

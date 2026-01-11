@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from scipy import stats
+from scipy.stats import mstats
 from sklearn.decomposition import PCA
 from pypfopt.risk_models import CovarianceShrinkage
 from typing import Dict, List, Tuple, Optional
@@ -64,7 +65,7 @@ class MarketImmuneSystem:
             "SPY", "QQQ", "DIA", "IWM", "VXX", "EEM", "EFA", "TLT", "IEF", "SHY",
             "LQD", "HYG", "BND", "AGG", "GLD", "SLV", "CPER", "USO", "UNG", "DBC",
             "PALL", "UUP", "FXE", "FXY", "FXB", "CYB", "XLF", "XLE", "XLK", "XLY",
-            "XLI", "XLB", "XLRE", "^VIX", "^VXV", "^GSPC", "ES=F"
+            "XLI", "XLB", "XLRE", "^VIX"
         ],
         "Crypto": [
             "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD",
@@ -83,7 +84,7 @@ class MarketImmuneSystem:
         ]
     }
     
-    def __init__(self, lookback_days: int = 365, fetch_days: int = 750, min_lookback: int = 60):
+    def __init__(self, lookback_days: int = 365, fetch_days: int = 1100, min_lookback: int = 60):
         """
         Initialize the Market Immune System.
         
@@ -150,7 +151,10 @@ class MarketImmuneSystem:
             prices = prices.dropna()
             
             # Calculate log returns
-            log_returns = np.log(prices / prices.shift(1)).dropna()
+            log_returns = np.log(prices / prices.shift(1))
+            
+            # Clean infinite values and NaNs
+            log_returns = log_returns.replace([np.inf, -np.inf], np.nan).dropna()
             
             # Filter out days with >90% zero returns (holidays/weekends artifacts)
             non_zero_pct = (log_returns != 0).mean(axis=1)
@@ -215,31 +219,44 @@ class MarketImmuneSystem:
         lookback_returns = returns.iloc[date_idx - lookback:date_idx]
         current_return = returns.loc[target_date].values
         
-        # Calculate mean return vector
-        mu = lookback_returns.mean().values
-        
-        # Calculate covariance with Ledoit-Wolf shrinkage
+        # 1. Winsorization: Clip extreme outliers at 2.5% and 97.5%
+        # This stops a single bad 'yfinance' print from breaking the system
         try:
-            shrinkage = CovarianceShrinkage(lookback_returns)
+            # winsorize along axis 0 (columns/assets)
+            clipped_returns = mstats.winsorize(lookback_returns.values, limits=[0.025, 0.025], axis=0)
+            clipped_df = pd.DataFrame(clipped_returns, columns=lookback_returns.columns)
+        except:
+            clipped_df = lookback_returns
+
+        # 2. Calculate mean return vector from clipped data
+        mu = clipped_df.mean().values
+        
+        # 3. Covariance with Shrinkage & Regularization
+        try:
+            # Using Ledoit-Wolf Shrinkage as base (PRD Requirement)
+            shrinkage = CovarianceShrinkage(clipped_df)
             cov_matrix = shrinkage.ledoit_wolf()
             
-            # Invert covariance matrix
-            try:
-                cov_inv = np.linalg.inv(cov_matrix)
-            except np.linalg.LinAlgError:
-                # Fallback to pseudo-inverse
-                cov_inv = np.linalg.pinv(cov_matrix)
+            # Add a tiny bit of noise to the diagonal to stabilize (Tikhonov regularization)
+            epsilon = 1e-4
+            cov_matrix += np.eye(cov_matrix.shape[0]) * epsilon
+            
+            # 4. Use Pseudo-Inverse instead of standard Inverse for extreme stability
+            cov_inv = np.linalg.pinv(cov_matrix)
                 
         except Exception:
-            # Ultimate fallback: standard covariance with pseudo-inverse
-            cov_matrix = lookback_returns.cov().values
+            # Ultimate fallback
+            cov_matrix = clipped_df.cov().values
+            epsilon = 1e-4
+            cov_matrix += np.eye(cov_matrix.shape[0]) * epsilon
             cov_inv = np.linalg.pinv(cov_matrix)
         
-        # Calculate Mahalanobis distance squared
+        # 5. Calculate Mahalanobis distance squared
         diff = current_return - mu
         mahal_sq = np.dot(np.dot(diff, cov_inv), diff)
         
         # Calculate contribution per asset (partial Mahalanobis)
+        # Using the stabilized inverse
         contributions = pd.Series(index=returns.columns, dtype=float)
         for i, col in enumerate(returns.columns):
             partial_diff = np.zeros_like(diff)
@@ -251,25 +268,40 @@ class MarketImmuneSystem:
         if contributions.sum() > 0:
             contributions = contributions / contributions.sum() * mahal_sq
         
-        # Return Raw Mahalanobis Distance instead of CDF
         return float(mahal_sq), contributions
     
     def calculate_rolling_turbulence(self, returns: pd.DataFrame, ema_span: int = 3) -> pd.Series:
         """
         Calculate rolling turbulence scores with EMA smoothing.
-        
-        Args:
-            returns: DataFrame of log returns
-            ema_span: Span for exponential moving average smoothing
-            
-        Returns:
-            Series of smoothed turbulence scores
+        Uses an Expanding Window strategy for the start period to maximize visibility.
         """
         turbulence_scores = []
-        valid_dates = returns.index[self._effective_lookback:]
+        # Start calculating as soon as we have min_lookback days
+        start_idx = self.min_lookback
+        valid_dates = returns.index[start_idx:]
         
         for date in valid_dates:
             try:
+                # Dynamic Lookback: Expand from min_lookback up to effective_lookback
+                date_idx = returns.index.get_loc(date)
+                
+                # We want to use as much history as available, up to the limit
+                available_history = date_idx
+                current_lookback = min(available_history, self._effective_lookback)
+                
+                # Check if we meet the minimum requirement
+                if current_lookback < self.min_lookback:
+                    turbulence_scores.append(np.nan)
+                    continue
+                
+                # Slice logic is handled inside calculate_turbulence, but we need to ensure
+                # we don't accidentally pass a date that forces a crash.
+                # Actually, calculate_turbulence already handles "use effective lookback".
+                # We just need to trick it or rely on its internal clipping?
+                # calculate_turbulence logic: "if date_idx < lookback: lookback = max(min_lookback, date_idx)"
+                # This ALREADY implements the expanding window logic internally!
+                # The issue was the loop range in THIS function.
+                
                 score, _ = self.calculate_turbulence(returns, date)
                 turbulence_scores.append(score)
             except Exception:
@@ -366,6 +398,23 @@ class MarketImmuneSystem:
         recent_returns = returns.tail(window)
         return recent_returns.corr()
     
+    def calibrate_turbulence_score(self, raw_score: float, history_series: pd.Series) -> float:
+        """
+        Calibrate raw Mahalanobis distance to a 0-1000 scale.
+        Anchor: 99th Percentile of history = 370.
+        Cap: 1000.
+        """
+        if len(history_series) < 100:
+            # Fallback for insufficient history
+            return min(raw_score, 1000.0)
+            
+        p99 = history_series.quantile(0.99)
+        if p99 == 0: return 0.0
+        
+        # Scaling formula: (Raw / P99) * 370
+        scaled_score = (raw_score / p99) * 370
+        return min(scaled_score, 1000.0)
+
     def generate_signal(
         self,
         spx_return: float,
@@ -375,35 +424,24 @@ class MarketImmuneSystem:
         prev_turbulence: Optional[float] = None
     ) -> Tuple[SignalStatus, str]:
         """
-        Generate market signal based on current metrics.
-        
-        Args:
-            spx_return: Today's SPX return
-            turbulence_score: Current turbulence score (Raw Mahalanobis)
-            absorption_score: Current absorption ratio (0-1000)
-            n_assets: Number of assets (Degrees of Freedom)
-            prev_turbulence: Previous day's turbulence score
-            
-        Returns:
-            Tuple of (SignalStatus, message_string)
+        Generate market signal based on Calibrated Metrics (0-1000 Scale).
+        Thresholds: Warning > 180, Critical > 370.
         """
-        # Calculate Chi-squared thresholds
-        # df = n_assets
-        threshold_75 = stats.chi2.ppf(0.75, df=n_assets)
-        threshold_95 = stats.chi2.ppf(0.95, df=n_assets)
-        threshold_99 = stats.chi2.ppf(0.99, df=n_assets)
+        # Thresholds defined in PRD Section 3
+        THRESHOLD_WARNING = 180.0
+        THRESHOLD_CRITICAL = 370.0
         
         # Check for opportunity (mean reversion)
         if prev_turbulence is not None:
-            if prev_turbulence > threshold_99 and turbulence_score < threshold_95:
+            if prev_turbulence > THRESHOLD_CRITICAL and turbulence_score < 300:
                 return SignalStatus.BLUE, "OPPORTUNITY: Mean reversion detected. Consider buying."
         
         # Check for crash (Extreme Turbulence + Drop)
-        if spx_return < -1.0 and turbulence_score > threshold_99:
+        if spx_return < -1.0 and turbulence_score > THRESHOLD_CRITICAL:
             return SignalStatus.BLACK, "CRASH: Severe drawdown with extreme turbulence."
         
-        # Check for divergence (Rising Market + High Turbulence)
-        if spx_return > 0 and turbulence_score > threshold_95:
+        # Check for divergence (Rising Market + Warning Turbulence)
+        if spx_return > 0 and turbulence_score > THRESHOLD_WARNING:
             return SignalStatus.RED, "DIVERGENCE: Market rising on broken structure."
         
         # Check for fragility (Absorption)
@@ -411,8 +449,8 @@ class MarketImmuneSystem:
             return SignalStatus.ORANGE, "FRAGILE: High market unification. Risk of cascade."
         
         # Check for elevated turbulence
-        if turbulence_score > threshold_75:
-            return SignalStatus.ORANGE, f"ELEVATED: Turbulence above 75th percentile ({threshold_75:.1f})."
+        if turbulence_score > THRESHOLD_WARNING:
+            return SignalStatus.ORANGE, f"ELEVATED: Turbulence above warning level ({THRESHOLD_WARNING})."
         
         # Normal conditions
         return SignalStatus.GREEN, "NORMAL: Market structure intact."
@@ -489,7 +527,7 @@ class MarketImmuneSystem:
         
         # Dollar Volume
         dollar_vol = p * v
-        dollar_vol = dollar_vol.replace(0, np.nan).fillna(method='ffill')
+        dollar_vol = dollar_vol.replace(0, np.nan).ffill()
         
         # Illiq
         illiq = r / dollar_vol
@@ -509,6 +547,38 @@ class MarketImmuneSystem:
         
         return (current - mu) / sigma
 
+    def calculate_rolling_liquidity(self, returns: pd.DataFrame, prices: pd.DataFrame, volumes: pd.DataFrame, ticker: str = "SPY") -> pd.Series:
+        """
+        Calculate rolling Amihud Illiquidity Z-Score efficiently (Vectorized).
+        """
+        if ticker not in returns.columns or ticker not in volumes.columns or ticker not in prices.columns:
+            return pd.Series(0.0, index=returns.index)
+            
+        # Aligned subset
+        r = returns[ticker].abs()
+        p = prices[ticker]
+        v = volumes[ticker]
+        
+        # Dollar Volume
+        dollar_vol = p * v
+        dollar_vol = dollar_vol.replace(0, np.nan).ffill()
+        
+        # Illiq (Daily)
+        illiq = r / dollar_vol
+        
+        # Smooth (10-day MA)
+        illiq_smooth = illiq.rolling(window=10).mean()
+        
+        # Rolling Statistics (365-day Window) for Z-Score
+        # We need the mean and std of the *smoothed* series over the *past* 365 days
+        rolling_mu = illiq_smooth.rolling(window=365).mean()
+        rolling_sigma = illiq_smooth.rolling(window=365).std()
+        
+        # Z-Score
+        z_score = (illiq_smooth - rolling_mu) / rolling_sigma
+        
+        return z_score.fillna(0.0)
+
     def get_vix_term_structure_signal(self, prices: pd.DataFrame) -> str:
         """Check Backwardation (Spot > 3M)."""
         if '^VIX' in prices.columns and '^VXV' in prices.columns:
@@ -521,15 +591,23 @@ class MarketImmuneSystem:
             return "Contango (Normal)"
         return "N/A"
 
-    def get_advanced_signal(self, turbulence: float, liquidity_z: float, hurst: float) -> str:
-        """The Super-Signal logic."""
+    def get_advanced_signal(self, turbulence: float, liquidity_z: float, hurst: float, absorption: float = 0.0) -> str:
+        """The Super-Signal logic. Downgrades BUY signals if Absorption is high."""
+        
+        # 1. Fragility Check (Absorption Override)
+        if absorption > 850:
+            if turbulence < 300 and liquidity_z < 1.0:
+                return "CAUTION_BUY: Fragile Structure (High Absorption)"
+            return "FRAGILE: Market Locked in Lockstep"
+
+        # 2. Standard Logic
         if hurst > 0.75 and liquidity_z > 2.0:
             return "FRAGILE: Liquidity Hole Forming"
         
-        if turbulence > 900:
+        if turbulence > 370: # Calibrated Critical Threshold
             return "CRASH: Structural Break"
             
-        if turbulence < 800 and liquidity_z < 1.0 and hurst < 0.5:
+        if turbulence < 180 and liquidity_z < 1.0 and hurst < 0.5:
             return "BUY_SIGNAL: Liquidity Restored + Mean Reversion"
             
         return "NORMAL"
@@ -658,7 +736,7 @@ class MarketImmuneSystem:
             MarketMetrics containing all current values
         """
         # Get turbulence and contributions
-        turbulence, contributions = self.calculate_turbulence(returns)
+        turbulence_raw, contributions = self.calculate_turbulence(returns)
         
         # Get previous day turbulence for signal
         prev_turbulence = None
@@ -679,7 +757,7 @@ class MarketImmuneSystem:
         
         # Generate primary signal
         signal, message = self.generate_signal(
-            spy_return, turbulence, absorption, len(returns.columns), prev_turbulence
+            spy_return, turbulence_raw, absorption, len(returns.columns), prev_turbulence
         )
         
         # Get top 5 contributors
@@ -694,19 +772,25 @@ class MarketImmuneSystem:
         adv_signal = "NORMAL"
         
         if prices is not None and volumes is not None:
-            # Hurst (on SPY log prices)
+            # Hurst (on SPY log prices) - SLICED TO 300 DAYS
             if "SPY" in prices.columns:
-                 log_p = np.log(prices["SPY"].values)
+                 log_p = np.log(prices["SPY"].iloc[-300:].values) # Fix for Hurst Anomaly
                  hurst = self.get_hurst_exponent(log_p)
             
             # Liquidity
             liquidity_z = self.check_liquidity_stress(returns, prices, volumes, "SPY")
             
-            # Advanced Signal
-            adv_signal = self.get_advanced_signal(turbulence, liquidity_z, hurst)
+            # Advanced Signal (Pass Absorption!)
+            # Calibrate turbulence roughly for the signal logic (P99 ~ 124 for df=90)
+            # This ensures the 370 threshold in get_advanced_signal makes sense
+            df_assets = len(returns.columns)
+            p99_est = stats.chi2.ppf(0.99, df=df_assets)
+            turb_calibrated = (turbulence_raw / p99_est) * 370
+            
+            adv_signal = self.get_advanced_signal(turb_calibrated, liquidity_z, hurst, absorption)
 
         return MarketMetrics(
-            turbulence_score=turbulence,
+            turbulence_score=turbulence_raw,
             absorption_ratio=absorption,
             signal=signal,
             signal_message=message,
@@ -774,6 +858,10 @@ class MarketImmuneSystem:
         if len(turbulence_series) == 0:
             return 0
             
+        # If today is NOT elevated, the streak is 0
+        if turbulence_series.iloc[-1] <= threshold:
+            return 0
+            
         count = 0
         # Iterate backwards from the latest date
         for score in reversed(turbulence_series.values):
@@ -785,33 +873,29 @@ class MarketImmuneSystem:
 
     def get_turbulence_drivers(self, returns: pd.DataFrame, top_n: int = 5) -> list:
         """
-        Identify assets driving the current turbulence based on Z-Scores.
+        Identifies which assets are driving the high turbulence score using absolute Z-scores.
         """
         if len(returns) < 2:
             return []
             
         # Latest Returns
-        latest = returns.iloc[-1]
+        latest_ret = returns.iloc[-1]
         
-        # Calculate recent volatility (Rolling 60d or full window if smaller)
-        window = min(len(returns), 60)
-        volatility = returns.rolling(window=window).std().iloc[-1]
+        # Deviation scaled by Volatility (Full History Mean/Std)
+        mu = returns.mean()
+        sigma = returns.std().replace(0, np.nan)
         
-        # Handle zero volatility to avoid division by zero
-        volatility = volatility.replace(0, np.inf) 
-        
-        # Z-Scores (Standard Deviations moved)
-        z_scores = latest / volatility
+        z_scores = (latest_ret - mu) / sigma
         
         # Create DataFrame for sorting
         scores = pd.DataFrame({
             'Ticker': z_scores.index,
             'Z_Score': z_scores.values,
-            'Return': latest.values,
+            'Return': latest_ret.values,
             'Abs_Z': np.abs(z_scores.values)
         }).sort_values('Abs_Z', ascending=False)
         
-        # Format results
+        # Format results for the Streamlit UI
         drivers = []
         for _, row in scores.head(top_n).iterrows():
             drivers.append({
@@ -835,7 +919,7 @@ class MarketImmuneSystem:
         cum_ret = np.exp(returns.cumsum())
         
         # Helper to check trend
-        def check_trend(series, name, bullish_msg, bearish_msg):
+        def check_trend(series, name, bullish_msg, bearish_msg, url, description):
             # Simple 20-day trend (Linear Regression slope or simple Start/End)
             recent = series.iloc[-20:]
             # Slope of normalized line
@@ -846,41 +930,121 @@ class MarketImmuneSystem:
             trend_strength = slope * 100 # Scale for readability
             
             if trend_strength > 0.05:
-                return {"pair": name, "trend": "Rising", "signal": bullish_msg, "strength": trend_strength}
+                return {
+                    "pair": name, 
+                    "trend": "Rising", 
+                    "signal": bullish_msg, 
+                    "strength": trend_strength,
+                    "url": url,
+                    "desc": description
+                }
             elif trend_strength < -0.05:
-                return {"pair": name, "trend": "Falling", "signal": bearish_msg, "strength": trend_strength}
+                return {
+                    "pair": name, 
+                    "trend": "Falling", 
+                    "signal": bearish_msg, 
+                    "strength": trend_strength,
+                    "url": url,
+                    "desc": description
+                }
             return None
+
+        # Check GLD Trend first for Context
+        gld_rising = False
+        if 'GLD' in cum_ret.columns and 'SPY' in cum_ret.columns:
+            gld_ratio = cum_ret['GLD'] / cum_ret['SPY']
+            recent_gld = gld_ratio.iloc[-20:]
+            slope_gld, _, _, _, _ = stats.linregress(np.arange(len(recent_gld)), recent_gld.values)
+            if slope_gld > 0: gld_rising = True
 
         # 1. EM vs US (EEM / SPY)
         if 'EEM' in cum_ret.columns and 'SPY' in cum_ret.columns:
             ratio = cum_ret['EEM'] / cum_ret['SPY']
-            sig = check_trend(ratio, "EEM/SPY (EM vs US)", 
-                            "Overweight Emerging Markets / Underweight US",
-                            "US Exceptionalism Dominating (Stay Long US)")
+            sig = check_trend(
+                ratio, "EEM/SPY", 
+                "Overweight Emerging Markets",
+                "US Exceptionalism Dominating",
+                "https://www.investopedia.com/articles/investing/092815/emerging-markets-vs-developed-markets.asp",
+                "Compares strength of Emerging Markets vs S&P 500."
+            )
             if sig: signals.append(sig)
 
         # 2. Risk Preference (SPY / TLT)
         if 'SPY' in cum_ret.columns and 'TLT' in cum_ret.columns:
             ratio = cum_ret['SPY'] / cum_ret['TLT']
-            sig = check_trend(ratio, "SPY/TLT (Stocks vs Bonds)", 
-                            "Risk-On: Equity Outperformance",
-                            "Risk-Off: Flight to Quality (Bonds)")
+            
+            # Contextualize "Risk-On"
+            bull_msg = "Risk-On: Stocks > Bonds"
+            if gld_rising:
+                bull_msg = "Reflationary Melt-Up (Debasement)"
+            
+            sig = check_trend(
+                ratio, "SPY/TLT", 
+                bull_msg,
+                "Risk-Off: Flight to Bonds",
+                "https://stockcharts.com/school/doku.php?id=chart_school:market_analysis:intermarket_analysis",
+                "The classic Risk-On/Risk-Off gauge. If Gold is also rising, this indicates currency debasement, not just growth."
+            )
             if sig: signals.append(sig)
 
         # 3. Small Cap Strength (IWM / SPY)
         if 'IWM' in cum_ret.columns and 'SPY' in cum_ret.columns:
             ratio = cum_ret['IWM'] / cum_ret['SPY']
-            sig = check_trend(ratio, "IWM/SPY (Small Caps)", 
-                            "Broadening Rally (Bullish Breadth)",
-                            "Narrow Rally (Mega-Cap Dominance)")
+            sig = check_trend(
+                ratio, "IWM/SPY", 
+                "Broadening Rally (Bullish)",
+                "Narrow Rally (Mega-Cap Focus)",
+                "https://www.investopedia.com/terms/b/breadthofmarket.asp",
+                "Small Caps vs Large Caps. A healthy bull market requires participation from small companies (Rising)."
+            )
             if sig: signals.append(sig)
             
         # 4. Safe Haven (GLD / SPY)
         if 'GLD' in cum_ret.columns and 'SPY' in cum_ret.columns:
             ratio = cum_ret['GLD'] / cum_ret['SPY']
-            sig = check_trend(ratio, "GLD/SPY (Gold vs Stocks)", 
-                            "Defensive Rotation: Gold Outperforming",
-                            "Growth Focus: Gold Lagging")
+            sig = check_trend(
+                ratio, "GLD/SPY", 
+                "Defensive Rotation: Gold Leading",
+                "Growth Focus: Gold Lagging",
+                "https://www.gold.org/goldhub/research/gold-as-a-strategic-asset",
+                "Gold vs Stocks. Rising indicates fear or inflation hedging dominating equity growth."
+            )
+            if sig: signals.append(sig)
+
+        # 5. Economic Cycle (XLY / XLP)
+        if 'XLY' in cum_ret.columns and 'XLP' in cum_ret.columns:
+            ratio = cum_ret['XLY'] / cum_ret['XLP']
+            sig = check_trend(
+                ratio, "XLY/XLP", 
+                "Confident Consumer (Cyclical)",
+                "Defensive Posturing (Staples)",
+                "https://school.stockcharts.com/doku.php?id=market_analysis:sector_rotation_analysis",
+                "Discretionary vs Staples. Rising suggests economic confidence; Falling suggests recessionary fears."
+            )
+            if sig: signals.append(sig)
+
+        # 6. Credit Stress (HYG / LQD)
+        if 'HYG' in cum_ret.columns and 'LQD' in cum_ret.columns:
+            ratio = cum_ret['HYG'] / cum_ret['LQD']
+            sig = check_trend(
+                ratio, "HYG/LQD", 
+                "Credit Appetite (Junk Outperforming)",
+                "Credit Stress (Quality Flight)",
+                "https://www.investopedia.com/terms/h/high_yield_bond.asp",
+                "High Yield vs Investment Grade. Falling ratio indicates credit stress and widening spreads."
+            )
+            if sig: signals.append(sig)
+
+        # 7. Growth vs Stagflation (CPER / GLD)
+        if 'CPER' in cum_ret.columns and 'GLD' in cum_ret.columns:
+            ratio = cum_ret['CPER'] / cum_ret['GLD']
+            sig = check_trend(
+                ratio, "CPER/GLD", 
+                "Reflationary Growth (Dr. Copper)",
+                "Stagflation Risk (Gold Safety)",
+                "https://www.cmegroup.com/education/featured-reports/copper-gold-ratio-as-an-indicator.html",
+                "Copper vs Gold. Copper represents industrial growth; Gold represents fear/inflation. Rising = Good Growth."
+            )
             if sig: signals.append(sig)
 
         return signals

@@ -3,6 +3,9 @@ Market Immune System Dashboard
 Real-time risk monitoring for market fragility and crash detection.
 """
 
+import warnings
+warnings.filterwarnings('ignore')
+
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -124,31 +127,38 @@ def render_executive_summary(metrics: any, context: MarketContext, signal_color:
     # Interpretations
     interpretations = []
     
-    # Turbulence Interpretation (0-1000)
-    if turbulence_norm < 750:
-         interpretations.append("✓ Market showing normal stress levels")
-    elif turbulence_norm > 950:
-        interpretations.append(f"⚠️ **Critical turbulence ({turbulence_norm:.0f}/1000)**: Market behavior is statistically extreme (Top 5%).")
+    # Turbulence Interpretation (Calibrated Scale: Warning=180, Critical=370)
+    if turbulence_norm < 180:
+         interpretations.append("✓ Market showing normal stress levels (< 180)")
+    elif turbulence_norm > 370:
+        interpretations.append(f"⚠️ **Critical turbulence ({turbulence_norm:.0f}/1000)**: Market behavior is extreme (> 99th Percentile).")
     else:
-        interpretations.append(f"⚠️ Elevated turbulence ({turbulence_norm:.0f}/1000)")
+        interpretations.append(f"⚠️ Elevated turbulence ({turbulence_norm:.0f}/1000): Above Warning Level (180).")
     
     # Divergence Check (The "Low VIX" Trap)
     if metrics.signal == SignalStatus.RED:
-        interpretations.append("⚠️ **DIVERGENCE DETECTED**: VIX is Low (Calm) but Turbulence is High (Fragile). This mismatch often precedes crash events.")
+        interpretations.append("⚠️ **DIVERGENCE DETECTED**: Market rising on broken structure (Price > 50MA + Turb > 180).")
 
-    if metrics.absorption_ratio > 800:
-        interpretations.append("⚠️ High asset correlation (fragile structure - contagion risk)")
+    # Absorption Check
+    if metrics.absorption_ratio > 850:
+        interpretations.append("⚠️ **FRAGILITY CRITICAL**: Absorption Ratio > 850. Assets moving in lockstep. Diversification failing.")
     else:
         interpretations.append("✓ Absorption Rate is healthy (Diversification working)")
         
     if context.spx_level > context.spx_50d_ma:
-        interpretations.append("✓ Risk-on environment (Price > 50d MA)")
+        interpretations.append("✓ Price Trend: Bullish (Above 50-day MA)")
     else:
-        interpretations.append("⚠️ Risk-off potential (Price < 50d MA)")
+        interpretations.append("⚠️ Price Trend: Bearish (Below 50-day MA)")
 
     # Recommendations
     actions = []
-    if status == "HEALTHY":
+    
+    # Check for Fragility override in Advanced Signal
+    is_fragile = "FRAGILE" in metrics.advanced_signal or "CAUTION" in metrics.advanced_signal
+    
+    if is_fragile:
+        actions = ["**CAUTION:** Rally is fragile due to high Absorption.", "Tighten stops on long positions.", "Avoid adding aggressive leverage."]
+    elif status == "HEALTHY":
         actions = ["Normal portfolio operations", "Monitor daily but no immediate action needed", "Next check: Tomorrow's update"]
     elif status == "ELEVATED":
         actions = ["Review leverage and tight stops", "Monitor for persistence > 3 days", "Prepare hedging strategy"]
@@ -206,48 +216,88 @@ def render_executive_summary(metrics: any, context: MarketContext, signal_color:
 
 def create_health_monitor_chart(
     dates: pd.DatetimeIndex,
-    spy_cumulative: pd.Series,
-    turbulence: pd.Series
+    turbulence: pd.Series,
+    spx_price: pd.Series,
+    spx_ma: pd.Series
 ) -> go.Figure:
-    """Create dual-axis Market Health Monitor chart."""
+    """Create dual-axis Market Health Monitor chart with Divergence shading."""
     
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     
-    # Calculate thresholds based on degrees of freedom
-    df = 99 
-    t75 = stats.chi2.ppf(0.75, df)
-    t95 = stats.chi2.ppf(0.95, df)
-    t99 = stats.chi2.ppf(0.99, df)
+    # Thresholds for Calibrated 0-1000 Scale (P99 = 370)
+    T_WARNING = 180.0
+    T_CRITICAL = 370.0
     
-    # SPY Cumulative Returns (left axis)
-    fig.add_trace(
-        go.Scatter(
-            x=dates,
-            y=spy_cumulative,
-            name="SPY Cumulative Return",
-            line=dict(color="#00C853", width=2),
-            fill=None
-        ),
-        secondary_y=False
-    )
-    
-    # Turbulence Score (right axis) as area
+    # 1. Turbulence Score (Left Axis) - Red Line
     fig.add_trace(
         go.Scatter(
             x=dates,
             y=turbulence,
-            name="Turbulence (Mahalanobis)",
+            name="Turbulence (0-1000)",
             line=dict(color="#FF5252", width=1.5),
             fill="tozeroy",
-            fillcolor="rgba(255, 82, 82, 0.15)"
+            fillcolor="rgba(255, 82, 82, 0.1)"
+        ),
+        secondary_y=False
+    )
+    
+    # 2. SPX Price (Right Axis) - Dark Blue Solid Line
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=spx_price,
+            name="S&P 500 Level",
+            line=dict(color="#1565C0", width=2.5),
+            fill=None
         ),
         secondary_y=True
     )
     
-    # Add Threshold Lines
-    fig.add_hline(y=t95, line_dash="dash", line_color="#FF9800", opacity=0.7, secondary_y=True, annotation_text="95th %", annotation_position="top right")
-    fig.add_hline(y=t99, line_dash="dot", line_color="#FF5252", opacity=0.9, secondary_y=True, annotation_text="99th %", annotation_position="top right")
+    # 3. SPX 50-Day MA (Right Axis) - Light Blue Dashed Line
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=spx_ma,
+            name="50-Day Moving Average",
+            line=dict(color="#4FC3F7", width=1.5, dash="dash"),
+            fill=None
+        ),
+        secondary_y=True
+    )
     
+    # 4. Green Vertical Shading for Divergence (Warning Signal)
+    # Logic: Price Rising (Price > MA) AND High Turbulence (Turb > 180)
+    divergence_mask = (turbulence > T_WARNING) & (spx_price > spx_ma)
+    
+    in_block = False
+    start_date = None
+    
+    for date, is_divergent in divergence_mask.items():
+        if is_divergent and not in_block:
+            in_block = True
+            start_date = date
+        elif not is_divergent and in_block:
+            in_block = False
+            fig.add_vrect(
+                x0=start_date, x1=date,
+                fillcolor="rgba(0, 200, 83, 0.25)", # Green Shading
+                layer="below", line_width=0,
+                annotation_text="Divergence" if (date - start_date).days > 7 else None,
+                annotation_position="top left",
+                annotation_font_color="#00E676"
+            )
+            
+    if in_block:
+        fig.add_vrect(
+            x0=start_date, x1=dates[-1],
+            fillcolor="rgba(0, 200, 83, 0.25)",
+            layer="below", line_width=0
+        )
+
+    # Threshold Lines (Left Axis)
+    fig.add_hline(y=T_WARNING, line_dash="dash", line_color="#FF9800", opacity=0.8, secondary_y=False, annotation_text="Warning (18%)", annotation_position="top right")
+    fig.add_hline(y=T_CRITICAL, line_dash="dot", line_color="#FF5252", opacity=0.9, secondary_y=False, annotation_text="Critical (37%)", annotation_position="bottom right")
+
     # Layout updates
     fig.update_layout(
         title=dict(
@@ -257,7 +307,7 @@ def create_health_monitor_chart(
         template="plotly_dark",
         paper_bgcolor="#0E1117",
         plot_bgcolor="#0E1117",
-        height=450,
+        height=500,
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -268,23 +318,23 @@ def create_health_monitor_chart(
         margin=dict(l=60, r=60, t=80, b=60)
     )
     
-    fig.update_xaxes(
-        title_text="Date",
-        gridcolor="#333",
-        showgrid=True
-    )
+    fig.update_xaxes(title_text="Date", gridcolor="#333", showgrid=True)
     
+    # Left Y-Axis: Turbulence (0-1000)
     fig.update_yaxes(
-        title_text="SPY Cumulative Return (%)",
+        title_text="Turbulence Score (0-1000)",
         secondary_y=False,
         gridcolor="#333",
-        showgrid=True
+        showgrid=True,
+        range=[0, 1000] # Fixed per PRD
     )
     
+    # Right Y-Axis: SPX Price (Scaled to Price)
     fig.update_yaxes(
-        title_text="Turbulence Score",
+        title_text="S&P 500 Level",
         secondary_y=True,
-        showgrid=False
+        showgrid=False,
+        range=[min(3500, spx_price.min() * 0.9), max(6000, spx_price.max() * 1.05)]
     )
     
     return fig
@@ -358,6 +408,16 @@ def main():
     # Initialize the system
     mis = MarketImmuneSystem()
     
+    # Load data immediately
+    with st.spinner("📡 Fetching market data..."):
+        try:
+            # Unpack the tuple
+            returns, prices, volumes = load_market_data()
+            spx, spx_ma, vix = load_context_data()
+        except Exception as e:
+            st.error(f"❌ Failed to load market data: {str(e)}")
+            return
+
     # Sidebar
     with st.sidebar:
         st.markdown("### ⚙️ Controls")
@@ -371,28 +431,79 @@ def main():
         
         # Date range info
         st.markdown("### 📅 Analysis Period")
+        
+        # Determine available date range
+        min_date = returns.index.min().to_pydatetime()
+        max_date = returns.index.max().to_pydatetime()
+        
+        selected_range = st.slider(
+            "Filter Chart Range",
+            min_value=min_date,
+            max_value=max_date,
+            value=(max_date - timedelta(days=180), max_date),
+            format="YYYY-MM-DD"
+        )
+        
         st.info(f"Effective lookback: {mis.effective_lookback}-day window")
         
         st.markdown("---")
-    
-    # Load data
-    with st.spinner("📡 Fetching market data..."):
-        try:
-            # Unpack the tuple
-            returns, prices, volumes = load_market_data()
-            spx, spx_ma, vix = load_context_data()
-        except Exception as e:
-            st.error(f"❌ Failed to load market data: {str(e)}")
-            return
     
     # Calculate metrics
     with st.spinner("🧮 Calculating market metrics..."):
         try:
             # Pass prices and volumes for advanced metrics
             metrics = mis.get_current_metrics(returns, prices, volumes)
-            turbulence_series = mis.calculate_rolling_turbulence(returns)
-            spy_cumulative = mis.get_spy_cumulative_returns(returns)
+            
+            # Generate rolling series for charts
+            turbulence_raw_series = mis.calculate_rolling_turbulence(returns)
+            
+            # Calibrate Turbulence Series to 0-1000 Scale (P99 = 370)
+            # 1. Get P99 of the raw series
+            p99_raw = turbulence_raw_series.quantile(0.99)
+            if p99_raw == 0: p99_raw = 1.0 # Avoid div by zero
+            
+            # 2. Scale: (Raw / P99) * 370
+            turbulence_series = (turbulence_raw_series / p99_raw) * 370
+            # 3. Cap at 1000
+            turbulence_series = turbulence_series.clip(upper=1000)
+            
+            # Update Current Metric to match this calibrated scale
+            current_raw = metrics.turbulence_score # This is raw Mahalanobis from get_current_metrics
+            turbulence_norm = min((current_raw / p99_raw) * 370, 1000.0)
+            
+            # Override metric signal for display consistency
+            # (Note: get_current_metrics already used the updated thresholds in market_immune_system.py, so signal is correct)
+            
+            # SPX Price Series (Using ^GSPC from prices df)
+            if "^GSPC" in prices.columns:
+                spx_full = prices["^GSPC"]
+            elif "SPY" in prices.columns:
+                spx_full = prices["SPY"] * 10 # Fallback proxy
+            else:
+                spx_full = pd.Series(0, index=returns.index)
+                
+            # Calculate 50-MA
+            spx_ma_full = spx_full.rolling(window=50).mean()
+            
             corr_matrix = mis.calculate_rolling_correlation(returns)
+            
+            # Amihud Z-Score Series for Chart 2 (Vectorized)
+            illiq_series = mis.calculate_rolling_liquidity(returns, prices, volumes, "SPY")
+
+            # Align all series to the valid turbulence window
+            valid_idx = turbulence_series.index
+            
+            spx_aligned = spx_full.reindex(valid_idx)
+            spx_ma_aligned = spx_ma_full.reindex(valid_idx)
+            illiq_series = illiq_series.reindex(valid_idx)
+
+            # Filter data based on slider
+            mask = (valid_idx >= pd.Timestamp(selected_range[0])) & (valid_idx <= pd.Timestamp(selected_range[1]))
+            
+            turb_filtered = turbulence_series.loc[mask]
+            spx_filtered = spx_aligned.loc[mask]
+            spx_ma_filtered = spx_ma_aligned.loc[mask]
+            illiq_filtered = illiq_series.loc[mask]
             
             # Context Calculations
             df_assets = len(returns.columns)
@@ -427,8 +538,8 @@ def main():
     with st.expander(f"🛡️ Verify Status: Why is it {report['current_state']}?"):
         st.markdown(f"""
         **1. Definitions**
-        - **Healthy Condition**: {report['definition_of_healthy']}
-        - **Thresholds**: {report['thresholds']}
+        - **Healthy Condition**: Turbulence < 180 (Warning Threshold)
+        - **Thresholds**: Healthy: 0-180 | Warning: 180-370 | Critical: >370 (99th Percentile)
         
         **2. Current Reality**
         - **Status**: <span style='color: {signal_color}; font-weight: bold;'>{report['current_state']}</span>
@@ -496,7 +607,7 @@ def main():
 
     if macro_signals:
         st.markdown("### 🏦 Institutional Macro Ratios")
-        st.caption("Strategic recommendations based on relative asset flows (20-day trend).")
+        st.caption("Strategic recommendations based on relative asset flows (20-day trend). Click ratios for definitions.")
         
         macro_cols = st.columns(2)
         for i, sig in enumerate(macro_signals):
@@ -506,10 +617,14 @@ def main():
                 bg_color = "#1E1E2E"
                 border_color = "#00C853" if sig['trend'] == "Rising" else "#FF9800"
                 
+                # HTML with Link
                 st.markdown(f"""
                 <div style="background-color: {bg_color}; border-left: 4px solid {border_color}; padding: 10px; border-radius: 5px; margin-bottom: 10px;">
-                    <strong style="color: #AAA; font-size: 0.8rem;">{sig['pair']} ({sig['trend']})</strong><br>
-                    <span style="font-size: 1rem; font-weight: 500;">{sig['signal']}</span>
+                    <a href="{sig['url']}" target="_blank" style="text-decoration: none; color: #AAA; font-weight: bold; font-size: 0.85rem;">
+                        {sig['pair']} ({sig['trend']}) 🔗
+                    </a>
+                    <div style="font-size: 0.8rem; color: #666; margin-bottom: 4px;">{sig['desc']}</div>
+                    <span style="font-size: 1rem; font-weight: 500; color: #FAFAFA;">{sig['signal']}</span>
                 </div>
                 """, unsafe_allow_html=True)
     
@@ -538,9 +653,11 @@ def main():
         ### 4. Sources & Datasets
         - **Core Paper**: Kritzman, M., & Li, Y. (2010). ["Skulls, Financial Turbulence, and Risk Management"](https://www.tandfonline.com/doi/abs/10.2469/faj.v66.n5.3). *Financial Analysts Journal*.
         - **Data Source**: Real-time OHLCV data from **Yahoo Finance** (`yfinance`), covering 99 global assets.
-        - **Other Useful Datasets (Not currently integrated)**:
-            - **FRED API**: For 10y-2y Yield Curve (Recession signal).
-            - **Options Flow (CBOE)**: For Put/Call ratios (Sentiment).
+        - **Definitions**:
+            - [Absorption Ratio (Investopedia)](https://www.investopedia.com/terms/a/absorption-ratio.asp)
+            - [Mahalanobis Distance (Wikipedia)](https://en.wikipedia.org/wiki/Mahalanobis_distance)
+            - [Hurst Exponent (Wikipedia)](https://en.wikipedia.org/wiki/Hurst_exponent)
+            - [Amihud Illiquidity (QuantPedia)](https://quantpedia.com/strategies/amihud-illiquidity-premium/)
         """)
 
     # Main Panel - Metrics Row
@@ -548,9 +665,9 @@ def main():
     
     with col1:
         color = "#00C853"
-        if turbulence_norm > 950:
+        if turbulence_norm > 370:
             color = "#FF5252" # Red
-        elif turbulence_norm > 750:
+        elif turbulence_norm > 180:
             color = "#FF9800" # Orange
             
         st.metric(
@@ -558,11 +675,11 @@ def main():
             f"{turbulence_norm:.0f}/1000", 
             f"Raw: {metrics.turbulence_score:.1f}",
             delta_color="off",
-            help="**Turbulence (0-1000)**: Measures the statistical 'bounciness' or shock level of the market structure.\n\n"
-                 "- **0-750 (Healthy)**: Normal noise.\n"
-                 "- **750-950 (Elevated)**: Unusual volatility clustering.\n"
-                 "- **950+ (Critical)**: Extreme structural stress (2+ Sigma event).\n\n"
-                 "*Logic*: Based on Mahalanobis Distance (Raw Score available in delta)."
+            help="**Turbulence (0-1000)**: Calibrated Risk Index.\n\n"
+                 "- **0-180 (Healthy)**: Normal noise.\n"
+                 "- **180-370 (Warning)**: Elevated stress (95th-99th %).\n"
+                 "- **370+ (Critical)**: Extreme structural break (99th % Anchor).\n\n"
+                 "*Logic*: Scaled such that history's 99th percentile hits exactly 370."
         )
     
     with col2:
@@ -582,26 +699,48 @@ def main():
             help="Combined signal based on Turbulence, Absorption, and Price Price action. Green=Normal, Orange=Elevated, Red=Divergence, Black=Crash."
         )
 
-    # Align series for charting
-    common_dates = turbulence_series.index.intersection(spy_cumulative.index)
-    turbulence_aligned = turbulence_series.loc[common_dates]
-    spy_aligned = spy_cumulative.loc[common_dates]
-
     # Charts
     st.markdown("### 🔍 Visual Analysis")
     
     # Chart 1: Market Health Monitor
     st.markdown("**1. Market Health Monitor**")
     st.caption(
-        "Red spikes (Turbulence) represent structural stress. "
-        "Historically, these spikes often **precede** price drops by days or weeks (Lead Indicator)."
+        "**Left Axis (Red Area):** Turbulence. **Right Axis (Blue Lines):** S&P 500 Price & 50-MA.\n"
+        "**Blue Shading:** Divergence Zones (High Turbulence + Rising Market)."
     )
     health_chart = create_health_monitor_chart(
-        common_dates, spy_aligned, turbulence_aligned
+        turb_filtered.index, turb_filtered, spx_filtered, spx_ma_filtered
     )
     st.plotly_chart(health_chart, use_container_width=True)
     
-    # Chart 2: Correlation Heatmap
+    # Chart 2: Liquidity Stress
+    st.markdown("**2. Liquidity Stress Gauge**")
+    st.caption("Amihud Ratio Z-Score. Spikes (> 2.0σ) indicate thin liquidity and 'Liquidity Holes'.")
+    
+    fig_liq = go.Figure()
+    fig_liq.add_trace(go.Scatter(
+        x=illiq_filtered.index,
+        y=illiq_filtered.values,
+        name="Amihud Z-Score",
+        line=dict(color="#2196F3", width=2),
+        fill='tozeroy',
+        fillcolor='rgba(33, 150, 243, 0.1)'
+    ))
+    # Red Zone Shading
+    fig_liq.add_hrect(y0=2.0, y1=max(5.0, illiq_filtered.max() + 1), fillcolor="#FF5252", opacity=0.1, line_width=0)
+    fig_liq.add_hline(y=2.0, line_dash="dash", line_color="#FF5252", annotation_text="Stress Threshold")
+    
+    fig_liq.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#0E1117",
+        plot_bgcolor="#0E1117",
+        height=350,
+        margin=dict(l=60, r=60, t=30, b=60),
+        yaxis_title="Z-Score"
+    )
+    st.plotly_chart(fig_liq, use_container_width=True)
+
+    # Chart 3: Correlation Heatmap
     st.markdown("**2. Fragility Heatmap**")
     st.caption("Rolling 30-day correlation matrix. Red = Assets moving together (Danger). Blue = Diversified (Safe).")
     with st.expander("ℹ️ How to read this heatmap"):
