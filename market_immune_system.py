@@ -24,6 +24,16 @@ class SignalStatus(Enum):
 
 
 @dataclass
+class MarketContext:
+    """Container for auxiliary market context data."""
+    spx_level: float
+    spx_50d_ma: float
+    vix_level: float
+    days_elevated: int
+    ai_turbulence: float
+    ai_market_ratio: float
+
+@dataclass
 class MarketMetrics:
     """Container for market health metrics."""
     turbulence_score: float
@@ -32,6 +42,12 @@ class MarketMetrics:
     signal_message: str
     top_contributors: List[Tuple[str, float]]
     spy_return: float
+    top_contributors: List[Tuple[str, float]]
+    spy_return: float
+    context: Optional[MarketContext] = None
+    hurst_exponent: float = 0.5
+    liquidity_z: float = 0.0
+    advanced_signal: str = "NORMAL"
 
 
 class MarketImmuneSystem:
@@ -48,7 +64,7 @@ class MarketImmuneSystem:
             "SPY", "QQQ", "DIA", "IWM", "VXX", "EEM", "EFA", "TLT", "IEF", "SHY",
             "LQD", "HYG", "BND", "AGG", "GLD", "SLV", "CPER", "USO", "UNG", "DBC",
             "PALL", "UUP", "FXE", "FXY", "FXB", "CYB", "XLF", "XLE", "XLK", "XLY",
-            "XLI", "XLB", "XLRE"
+            "XLI", "XLB", "XLRE", "^VIX", "^VXV", "^GSPC", "ES=F"
         ],
         "Crypto": [
             "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD",
@@ -94,12 +110,10 @@ class MarketImmuneSystem:
         """Get the effective lookback window being used."""
         return self._effective_lookback
     
-    def fetch_data(self) -> pd.DataFrame:
+    def fetch_data(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
-        Fetch price data from yfinance and calculate log returns.
-        
-        Returns:
-            DataFrame of log returns indexed by date
+        Fetch price and volume data.
+        Returns: (log_returns, prices, volumes)
         """
         try:
             # Download all tickers at once for efficiency
@@ -142,19 +156,39 @@ class MarketImmuneSystem:
             non_zero_pct = (log_returns != 0).mean(axis=1)
             log_returns = log_returns[non_zero_pct > 0.1]
             
+            # Align prices and volume to clean returns index
+            common_idx = log_returns.index
+            prices = prices.reindex(common_idx)
+            
+            # Handle Volume
+            # yfinance returns volume as part of data if not multi-index, or MultiIndex
+            # We need to extract it similar to Close
+            if isinstance(data.columns, pd.MultiIndex):
+                if 'Volume' in data.columns.get_level_values(0):
+                    volume = data['Volume']
+                else:
+                    volume = pd.DataFrame(1, index=data.index, columns=prices.columns) # Fallback
+            elif 'Volume' in data.columns:
+                 volume = data['Volume']
+            else:
+                 volume = pd.DataFrame(1, index=data.index, columns=prices.columns)
+
+            volume = volume.ffill().reindex(common_idx)
+            
             # Dynamically adjust lookback if insufficient data
             available_days = len(log_returns)
             if available_days < self.lookback_days:
-                # Use 60% of available data, but at least min_lookback
                 adjusted_lookback = max(self.min_lookback, int(available_days * 0.6))
                 self._effective_lookback = adjusted_lookback
             else:
-                self._effective_lookback = self.lookback_days
-            
-            return log_returns
+                 self._effective_lookback = self.lookback_days
+                 
+            return log_returns, prices, volume
             
         except Exception as e:
-            raise RuntimeError(f"Failed to fetch market data: {str(e)}")
+            print(f"Error fetching data: {e}")
+            # Return empty DFs on failure
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     
     def calculate_turbulence(self, returns: pd.DataFrame, target_date: Optional[pd.Timestamp] = None) -> Tuple[float, pd.Series]:
         """
@@ -383,12 +417,242 @@ class MarketImmuneSystem:
         # Normal conditions
         return SignalStatus.GREEN, "NORMAL: Market structure intact."
     
-    def get_current_metrics(self, returns: pd.DataFrame) -> MarketMetrics:
+    def _estimate_covariance(self, returns: pd.DataFrame) -> pd.DataFrame:
+        """Helper to estimate covariance matrix using Ledoit-Wolf shrinkage."""
+        try:
+            shrinkage = CovarianceShrinkage(returns)
+            cov_matrix = shrinkage.ledoit_wolf()
+        except Exception:
+            cov_matrix = returns.cov()
+        return cov_matrix
+
+    def calculate_sector_turbulence(self, returns: pd.DataFrame, sector_name: str = "AI & Growth") -> float:
+        """Calculate turbulence score specifically for a sector subset."""
+        if sector_name not in self.ASSET_UNIVERSE:
+            return 0.0
+            
+        sector_assets = [t for t in self.ASSET_UNIVERSE[sector_name] if t in returns.columns]
+        if len(sector_assets) < 2:
+            return 0.0
+            
+        sector_returns = returns[sector_assets]
+        
+        # Calculate covariance for sector
+        try:
+            cov_matrix = self._estimate_covariance(sector_returns)
+            # Inverse covariance
+            inv_cov = np.linalg.pinv(cov_matrix.values) if np.linalg.det(cov_matrix.values) == 0 else np.linalg.inv(cov_matrix.values)
+            
+            # Mahalanobis for latest day
+            latest = sector_returns.iloc[-1].values
+            mean = sector_returns.mean().values
+            diff = latest - mean
+            
+            dist_sq = diff.dot(inv_cov).dot(diff)
+            return dist_sq
+        except:
+             return 0.0
+
+    @staticmethod
+    def get_hurst_exponent(time_series: np.array, max_lag: int = 20) -> float:
+        """
+        Calculates the Hurst Exponent (H) to detect market fragility.
+        H > 0.75 signalizes a 'crowded trade' prone to sharp reversal.
+        Using Log Prices as time_series input.
+        """
+        try:
+            lags = range(2, max_lag)
+            # Tau = StdDev of (Price(t+lag) - Price(t)) => StdDev of Log Returns over 'lag'
+            tau = [np.sqrt(np.std(np.subtract(time_series[lag:], time_series[:-lag]))) for lag in lags]
+            
+            # Polyfit log(tau) vs log(lag)
+            # Slope m = H
+            m = np.polyfit(np.log(lags), np.log(tau), 1)
+            hurst = m[0]
+            # Standard Hurst ranges 0-1. 
+            # If time_series is geometric brownian motion, variance scales with t. Std scales with t^0.5. slope=0.5.
+            return hurst
+        except:
+            return 0.5
+
+    def check_liquidity_stress(self, returns: pd.DataFrame, prices: pd.DataFrame, volumes: pd.DataFrame, ticker: str = "SPY") -> float:
+        """
+        Calculates Amihud Illiquidity Proxy Z-Score for a specific ticker (SPY default).
+        """
+        if ticker not in returns.columns or ticker not in volumes.columns or ticker not in prices.columns:
+            return 0.0
+            
+        # Aligned subset
+        r = returns[ticker].abs()
+        p = prices[ticker]
+        v = volumes[ticker]
+        
+        # Dollar Volume
+        dollar_vol = p * v
+        dollar_vol = dollar_vol.replace(0, np.nan).fillna(method='ffill')
+        
+        # Illiq
+        illiq = r / dollar_vol
+        
+        # Smooth
+        illiq_smooth = illiq.rolling(window=10).mean()
+        
+        # Normalize (Z-Score vs 365d history)
+        history = illiq_smooth.iloc[-365:]
+        if len(history) < 20: return 0.0
+        
+        mu = history.mean()
+        sigma = history.std()
+        current = illiq_smooth.iloc[-1]
+        
+        if sigma == 0: return 0.0
+        
+        return (current - mu) / sigma
+
+    def get_vix_term_structure_signal(self, prices: pd.DataFrame) -> str:
+        """Check Backwardation (Spot > 3M)."""
+        if '^VIX' in prices.columns and '^VXV' in prices.columns:
+            spot = prices['^VIX'].iloc[-1]
+            term = prices['^VXV'].iloc[-1]
+            if term == 0: return "N/A"
+            ratio = spot / term
+            if ratio > 1.0:
+                return "BACKWARDATION (Panic)"
+            return "Contango (Normal)"
+        return "N/A"
+
+    def get_advanced_signal(self, turbulence: float, liquidity_z: float, hurst: float) -> str:
+        """The Super-Signal logic."""
+        if hurst > 0.75 and liquidity_z > 2.0:
+            return "FRAGILE: Liquidity Hole Forming"
+        
+        if turbulence > 900:
+            return "CRASH: Structural Break"
+            
+        if turbulence < 800 and liquidity_z < 1.0 and hurst < 0.5:
+            return "BUY_SIGNAL: Liquidity Restored + Mean Reversion"
+            
+        return "NORMAL"
+
+    def get_crash_forecast(self, turbulence: pd.Series, prices: pd.DataFrame, ticker: str = "^GSPC") -> Dict:
+        """
+        Estimate crash probability based on historical Divergence signals.
+        Returns: {probability, avg_lead_time, sample_size}
+        """
+        default_res = {"probability": 0.0, "avg_lead_time": 0.0, "sample_size": 0}
+        
+        if ticker not in prices.columns:
+            # Fallback to SPY if GSPC missing
+            if "SPY" in prices.columns:
+                ticker = "SPY"
+            else:
+                return default_res
+            
+        p = prices[ticker]
+        
+        # Align series
+        common = turbulence.index.intersection(p.index)
+        if len(common) < 100:
+             return default_res
+             
+        t = turbulence.loc[common]
+        p_aligned = p.loc[common]
+        
+        # Calculate SMA50
+        sma = p_aligned.rolling(50).mean()
+        
+        # Divergence: High Turb (>95th percentile) AND Rising Price (Price > SMA)
+        thresh = t.quantile(0.95)
+        rising = p_aligned > sma
+        
+        signals = (t > thresh) & rising
+        
+        # Analyze forward returns for signal dates
+        crash_count = 0
+        total_signals = 0
+        lead_times = []
+        
+        # Group signals by week (approx) to avoid counting same event multiple times
+        i = 0
+        dates = signals.index
+        while i < len(dates) - 20:
+            if signals.iloc[i]:
+                total_signals += 1
+                # Check next 20 days for drawdown > 3%
+                start_price = p_aligned.iloc[i]
+                future_prices = p_aligned.iloc[i+1 : i+21]
+                if len(future_prices) > 0:
+                    min_price = future_prices.min()
+                    drawdown = (min_price - start_price) / start_price
+                    
+                    if drawdown < -0.03:
+                        crash_count += 1
+                        # Estimate lead time: Day of min price
+                        days_to_min = (future_prices.idxmin() - dates[i]).days
+                        lead_times.append(days_to_min)
+                
+                i += 20 # Skip forward to avoid overlapping signals
+            else:
+                i += 1
+                
+        prob = (crash_count / total_signals * 100) if total_signals > 0 else 0.0
+        avg_lead = np.mean(lead_times) if lead_times else 0.0
+        
+        return {
+            "probability": float(prob),
+            "avg_lead_time": float(avg_lead),
+            "sample_size": int(total_signals)
+        }
+
+    def get_detailed_report(self, metrics: MarketMetrics) -> Dict[str, str]:
+        """
+        Generate a detailed explanation of the current state, 
+        defining what 'Healthy' means vs current reality.
+        """
+        
+        # 1. State Verification
+        turb_norm = stats.chi2.cdf(metrics.turbulence_score, 99) * 1000
+        
+        state = "UNKNOWN"
+        reason = ""
+        healthy_target = "Turbulence < 750 (75th Percentile)"
+        
+        if turb_norm < 750:
+            state = "HEALTHY"
+            reason = f"Turbulence ({turb_norm:.0f}) is within normal noise levels (Bottom 75%). No structural stress detected."
+            action = "Maintain optimal exposure. Market functioning normally."
+        elif turb_norm < 950:
+            state = "AT RISK (ELEVATED)"
+            reason = f"Turbulence ({turb_norm:.0f}) is Elevated (Top 25%). Volatility clustering detected."
+            action = "Monitor closely. Tighten stops. Avoid aggressive leverage."
+        else:
+            state = "CRITICAL"
+            reason = f"Turbulence ({turb_norm:.0f}) is Extreme (Top 5%). Values > 950 indicate a 2-Sigma structural break."
+            action = "Reduce Risk. Hedge Tails. Market is fragile and prone to cascade."
+
+        # 2. Divergence Logic
+        # VIX is explicitly passed via Context usually, but we can infer or use general logic
+        # If State is Critical but VIX is low (we don't have VIX here usually, only in Context)
+        # We'll use the Advanced Signal "Fragile" text if available
+        if "FRAGILE" in metrics.advanced_signal:
+             reason += " **Divergence Confirmed**: Hurst Exponent (>0.75) shows crowding despite calm price action."
+
+        return {
+            "current_state": state,
+            "verification_math": reason,
+            "definition_of_healthy": healthy_target,
+            "recommended_action": action,
+            "thresholds": "Healthy: 0-750 | Elevated: 750-950 | Critical: 950-1000"
+        }
+
+    def get_current_metrics(self, returns: pd.DataFrame, prices: pd.DataFrame = None, volumes: pd.DataFrame = None) -> MarketMetrics:
         """
         Calculate all current market metrics.
         
         Args:
             returns: DataFrame of log returns
+            prices: DataFrame of prices (optional, for advanced metrics)
+            volumes: DataFrame of volumes (optional, for advanced metrics)
             
         Returns:
             MarketMetrics containing all current values
@@ -397,22 +661,23 @@ class MarketImmuneSystem:
         turbulence, contributions = self.calculate_turbulence(returns)
         
         # Get previous day turbulence for signal
-        try:
-            prev_date = returns.index[-2]
-            prev_turbulence, _ = self.calculate_turbulence(returns, prev_date)
-        except Exception:
-            prev_turbulence = None
+        prev_turbulence = None
+        if len(returns) > 1:
+            try:
+                prev_date = returns.index[-2]
+                prev_turbulence, _ = self.calculate_turbulence(returns, prev_date)
+            except Exception:
+                pass # If calculation fails for prev_date, prev_turbulence remains None
         
         # Get absorption ratio
         absorption = self.calculate_absorption_ratio(returns)
         
         # Get SPY return
+        spy_return = 0.0
         if 'SPY' in returns.columns:
             spy_return = returns['SPY'].iloc[-1] * 100  # Convert to percentage
-        else:
-            spy_return = 0.0
         
-        # Generate signal
+        # Generate primary signal
         signal, message = self.generate_signal(
             spy_return, turbulence, absorption, len(returns.columns), prev_turbulence
         )
@@ -423,13 +688,33 @@ class MarketImmuneSystem:
             (ticker, float(value)) for ticker, value in top_contributors.items()
         ]
         
+        # Advanced Metrics
+        hurst = 0.5
+        liquidity_z = 0.0
+        adv_signal = "NORMAL"
+        
+        if prices is not None and volumes is not None:
+            # Hurst (on SPY log prices)
+            if "SPY" in prices.columns:
+                 log_p = np.log(prices["SPY"].values)
+                 hurst = self.get_hurst_exponent(log_p)
+            
+            # Liquidity
+            liquidity_z = self.check_liquidity_stress(returns, prices, volumes, "SPY")
+            
+            # Advanced Signal
+            adv_signal = self.get_advanced_signal(turbulence, liquidity_z, hurst)
+
         return MarketMetrics(
             turbulence_score=turbulence,
             absorption_ratio=absorption,
             signal=signal,
             signal_message=message,
             top_contributors=top_contributors_list,
-            spy_return=spy_return
+            spy_return=spy_return,
+            hurst_exponent=hurst,
+            liquidity_z=liquidity_z,
+            advanced_signal=adv_signal
         )
     
     def get_spy_cumulative_returns(self, returns: pd.DataFrame) -> pd.Series:
@@ -449,3 +734,177 @@ class MarketImmuneSystem:
         cumulative = (np.exp(spy_returns.cumsum()) - 1) * 100
         
         return cumulative
+
+    def fetch_market_context_data(self) -> Tuple[float, float, float]:
+        """
+        Fetch auxiliary market data (SPX Level, SPX 50d MA, VIX Level).
+        Returns: (spx_price, spx_50d_ma, vix_price)
+        """
+        try:
+            # Fetch SPX and VIX
+            aux_data = yf.download(["^GSPC", "^VIX"], period="6mo", progress=False, threads=True)
+            
+            # Extract SPX and VIX safely
+            # yfinance structure varies (Price, Ticker) or just (Ticker)
+            if isinstance(aux_data.columns, pd.MultiIndex):
+                try:
+                    spx = aux_data["Close"]["^GSPC"].dropna()
+                    vix = aux_data["Close"]["^VIX"].dropna()
+                except KeyError:
+                    # Try accessing level 1 directly if level 0 is not named 'Close'
+                    spx = aux_data.xs('^GSPC', level=1, axis=1)["Close"].dropna()
+                    vix = aux_data.xs('^VIX', level=1, axis=1)["Close"].dropna()
+            else:
+                spx = aux_data["Close"] if "^GSPC" not in aux_data.columns else aux_data["^GSPC"]
+                vix = aux_data["Close"] if "^VIX" not in aux_data.columns else aux_data["^VIX"]
+
+            current_spx = float(spx.iloc[-1])
+            spx_ma = float(spx.rolling(window=50).mean().iloc[-1])
+            current_vix = float(vix.iloc[-1])
+            
+            return current_spx, spx_ma, current_vix
+        except Exception as e:
+            print(f"Error fetching context data: {e}")
+            return 0.0, 0.0, 0.0
+
+    def calculate_days_elevated(self, turbulence_series: pd.Series, threshold: float) -> int:
+        """
+        Calculate consecutive days the turbulence has been above the threshold.
+        """
+        if len(turbulence_series) == 0:
+            return 0
+            
+        count = 0
+        # Iterate backwards from the latest date
+        for score in reversed(turbulence_series.values):
+            if score > threshold:
+                count += 1
+            else:
+                break
+        return count
+
+    def get_turbulence_drivers(self, returns: pd.DataFrame, top_n: int = 5) -> list:
+        """
+        Identify assets driving the current turbulence based on Z-Scores.
+        """
+        if len(returns) < 2:
+            return []
+            
+        # Latest Returns
+        latest = returns.iloc[-1]
+        
+        # Calculate recent volatility (Rolling 60d or full window if smaller)
+        window = min(len(returns), 60)
+        volatility = returns.rolling(window=window).std().iloc[-1]
+        
+        # Handle zero volatility to avoid division by zero
+        volatility = volatility.replace(0, np.inf) 
+        
+        # Z-Scores (Standard Deviations moved)
+        z_scores = latest / volatility
+        
+        # Create DataFrame for sorting
+        scores = pd.DataFrame({
+            'Ticker': z_scores.index,
+            'Z_Score': z_scores.values,
+            'Return': latest.values,
+            'Abs_Z': np.abs(z_scores.values)
+        }).sort_values('Abs_Z', ascending=False)
+        
+        # Format results
+        drivers = []
+        for _, row in scores.head(top_n).iterrows():
+            drivers.append({
+                'ticker': row['Ticker'],
+                'z_score': row['Z_Score'],
+                'return': row['Return'] * 100 # Convert to %
+            })
+            
+        return drivers
+
+    def get_macro_signals(self, returns: pd.DataFrame) -> List[Dict]:
+        """
+        Analyze macro-economic ratios for institutional recommendations.
+        Uses cumulative returns to approximate price trends.
+        """
+        signals = []
+        if len(returns) < 20:
+            return signals
+            
+        # Reconstruct cumulative returns (Index starts at 1.0)
+        cum_ret = np.exp(returns.cumsum())
+        
+        # Helper to check trend
+        def check_trend(series, name, bullish_msg, bearish_msg):
+            # Simple 20-day trend (Linear Regression slope or simple Start/End)
+            recent = series.iloc[-20:]
+            # Slope of normalized line
+            y = recent.values
+            x = np.arange(len(y))
+            slope, _, _, _, _ = stats.linregress(x, y)
+            
+            trend_strength = slope * 100 # Scale for readability
+            
+            if trend_strength > 0.05:
+                return {"pair": name, "trend": "Rising", "signal": bullish_msg, "strength": trend_strength}
+            elif trend_strength < -0.05:
+                return {"pair": name, "trend": "Falling", "signal": bearish_msg, "strength": trend_strength}
+            return None
+
+        # 1. EM vs US (EEM / SPY)
+        if 'EEM' in cum_ret.columns and 'SPY' in cum_ret.columns:
+            ratio = cum_ret['EEM'] / cum_ret['SPY']
+            sig = check_trend(ratio, "EEM/SPY (EM vs US)", 
+                            "Overweight Emerging Markets / Underweight US",
+                            "US Exceptionalism Dominating (Stay Long US)")
+            if sig: signals.append(sig)
+
+        # 2. Risk Preference (SPY / TLT)
+        if 'SPY' in cum_ret.columns and 'TLT' in cum_ret.columns:
+            ratio = cum_ret['SPY'] / cum_ret['TLT']
+            sig = check_trend(ratio, "SPY/TLT (Stocks vs Bonds)", 
+                            "Risk-On: Equity Outperformance",
+                            "Risk-Off: Flight to Quality (Bonds)")
+            if sig: signals.append(sig)
+
+        # 3. Small Cap Strength (IWM / SPY)
+        if 'IWM' in cum_ret.columns and 'SPY' in cum_ret.columns:
+            ratio = cum_ret['IWM'] / cum_ret['SPY']
+            sig = check_trend(ratio, "IWM/SPY (Small Caps)", 
+                            "Broadening Rally (Bullish Breadth)",
+                            "Narrow Rally (Mega-Cap Dominance)")
+            if sig: signals.append(sig)
+            
+        # 4. Safe Haven (GLD / SPY)
+        if 'GLD' in cum_ret.columns and 'SPY' in cum_ret.columns:
+            ratio = cum_ret['GLD'] / cum_ret['SPY']
+            sig = check_trend(ratio, "GLD/SPY (Gold vs Stocks)", 
+                            "Defensive Rotation: Gold Outperforming",
+                            "Growth Focus: Gold Lagging")
+            if sig: signals.append(sig)
+
+        return signals
+
+
+    def calculate_sector_turbulence(self, returns: pd.DataFrame, sector_name: str = "AI & Growth") -> float:
+        """Calculate turbulence score specifically for a sector subset."""
+        if sector_name not in self.ASSET_UNIVERSE:
+            return 0.0
+            
+        sector_tickers = self.ASSET_UNIVERSE[sector_name]
+        # Filter columns that exist in returns
+        valid_tickers = [t for t in sector_tickers if t in returns.columns]
+        
+        if len(valid_tickers) < 5:
+            return 0.0
+            
+        subset_returns = returns[valid_tickers]
+        
+        # Calculate for latest date
+        try:
+            # Use raw Mahalanobis (returns tuple, get first element)
+            score, _ = self.calculate_turbulence(subset_returns, subset_returns.index[-1])
+            return score
+        except Exception as e:
+            print(f"Sector turbulence error: {e}")
+            return 0.0
