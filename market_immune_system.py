@@ -63,7 +63,7 @@ class MarketImmuneSystem:
             "SPY", "QQQ", "DIA", "IWM", "VXX", "EEM", "EFA", "TLT", "IEF", "SHY",
             "LQD", "HYG", "BND", "AGG", "GLD", "SLV", "CPER", "USO", "UNG", "DBC",
             "PALL", "UUP", "FXE", "FXY", "FXB", "CYB", "XLF", "XLE", "XLK", "XLY",
-            "XLI", "XLB", "XLRE", "^VIX"
+            "XLI", "XLB", "XLRE", "^VIX", "^VIX3M"
         ],
         "Crypto": [
             "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD",
@@ -619,16 +619,29 @@ class MarketImmuneSystem:
             return {}
 
     def get_vix_term_structure_signal(self, prices: pd.DataFrame) -> str:
-        """Check Backwardation (Spot > 3M)."""
-        if '^VIX' in prices.columns and '^VXV' in prices.columns:
+        """Check Backwardation (Spot > 3M). Uses VIX3M or VXV."""
+        if '^VIX' not in prices.columns:
+            return "N/A (VIX Missing)"
+            
+        # Try finding 3-month VIX ticker
+        term_ticker = None
+        if '^VIX3M' in prices.columns:
+            term_ticker = '^VIX3M'
+        elif '^VXV' in prices.columns:
+            term_ticker = '^VXV'
+            
+        if term_ticker:
             spot = prices['^VIX'].iloc[-1]
-            term = prices['^VXV'].iloc[-1]
-            if term == 0: return "N/A"
+            term = prices[term_ticker].iloc[-1]
+            
+            if term == 0: return "N/A (Zero Term)"
+            
             ratio = spot / term
             if ratio > 1.0:
-                return "BACKWARDATION (Panic)"
-            return "Contango (Normal)"
-        return "N/A"
+                return f"BACKWARDATION (Panic) {ratio:.2f}"
+            return f"Contango (Normal) {ratio:.2f}"
+            
+        return "N/A (3M VIX Missing)"
 
     def get_advanced_signal(self, turbulence: float, liquidity_z: float, hurst: float, absorption: float = 0.0) -> str:
         """The Super-Signal logic. Downgrades BUY signals if Absorption is high."""
@@ -636,20 +649,20 @@ class MarketImmuneSystem:
         # 1. Fragility Check (Absorption Override)
         if absorption > 850:
             if turbulence < 300 and liquidity_z < 1.0:
-                return "CAUTION_BUY: Fragile Structure (High Absorption)"
-            return "FRAGILE: Market Locked in Lockstep"
+                return "Caution: Fragile Buy (High Absorption)"
+            return "Warning: Market Locked in Lockstep"
 
         # 2. Standard Logic
         if hurst > 0.75 and liquidity_z > 2.0:
-            return "FRAGILE: Liquidity Hole Forming"
+            return "Danger: Liquidity Hole Forming"
         
         if turbulence > 370: # Calibrated Critical Threshold
-            return "CRASH: Structural Break"
+            return "Critical: Structural Break Detected"
             
         if turbulence < 180 and liquidity_z < 1.0 and hurst < 0.5:
-            return "BUY_SIGNAL: Liquidity Restored + Mean Reversion"
+            return "Strong Buy: Liquidity Restored"
             
-        return "NORMAL"
+        return "Normal Market Conditions"
 
     def get_crash_forecast(self, turbulence: pd.Series, prices: pd.DataFrame, ticker: str = "^GSPC") -> Dict:
         """

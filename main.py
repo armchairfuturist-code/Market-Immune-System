@@ -703,7 +703,7 @@ def main():
     with q2:
         hurst_delta = None
         if metrics.hurst_exponent < 0.4 and market_context.spx_level > market_context.spx_50d_ma:
-            hurst_delta = "⚠️ Mean Reversion vs Trend Conflict"
+            hurst_delta = "⚠️ Trend Conflict (Mean Reversion)"
             
         st.metric(
             "Hurst Exponent (Fractal)",
