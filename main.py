@@ -112,7 +112,7 @@ def load_context_data():
     mis = MarketImmuneSystem()
     return mis.fetch_market_context_data()
 
-def render_executive_summary(metrics: any, context: MarketContext, signal_color: str, turbulence_norm: float):
+def render_executive_summary(metrics: any, context: MarketContext, signal_color: str, turbulence_norm: float, analysis_date: str):
     """Render the text-based executive summary."""
     
     # Determine Status String
@@ -159,8 +159,10 @@ def render_executive_summary(metrics: any, context: MarketContext, signal_color:
     # Recommendations
     actions = []
     
-    # Handle the new FRAGILE state (High Absorption, Low Turbulence)
-    if status == "FRAGILE":
+    # Check for Fragility override in Advanced Signal
+    is_fragile = "FRAGILE" in metrics.advanced_signal or "CAUTION" in metrics.advanced_signal
+    
+    if is_fragile:
         actions = [
             "**CAUTION: MELT-UP REGIME.** Prices rising on thin ice.",
             "Diversification is failing (Absorption Critical).",
@@ -183,9 +185,11 @@ def render_executive_summary(metrics: any, context: MarketContext, signal_color:
         ai_msg = "AI SHOWING RELATIVE STRENGTH" if context.ai_market_ratio < 1.0 else "AI LEADING THE DROP"
 
     # Important: No indentation in the HTML string to prevent Markdown code block rendering
+    header_title = f"HISTORICAL IMMUNE SYSTEM STATUS - {analysis_date}" if analysis_date != datetime.now().strftime('%Y-%m-%d') else f"CURRENT IMMUNE SYSTEM STATUS - {analysis_date}"
+    
     html_content = f"""
 <div class="summary-card">
-<div class="summary-header">📋 CURRENT IMMUNE SYSTEM STATUS - {datetime.now().strftime('%Y-%m-%d')}</div>
+<div class="summary-header">📋 {header_title}</div>
 <div style="margin-bottom: 1rem;">
 <strong>WARNING LEVEL:</strong> <span style="background-color: {signal_color}; color: white; padding: 2px 8px; border-radius: 4px;">{status}</span>
 </div>
@@ -448,6 +452,15 @@ def main():
         min_date = returns.index.min().to_pydatetime()
         max_date = returns.index.max().to_pydatetime()
         
+        # 1. Historical Spot Check
+        analysis_date = st.date_input(
+            "Select Analysis Date",
+            value=max_date,
+            min_value=min_date,
+            max_value=max_date
+        )
+        
+        # 2. Chart Filter
         selected_range = st.slider(
             "Filter Chart Range",
             min_value=min_date,
@@ -463,8 +476,12 @@ def main():
     # Calculate metrics
     with st.spinner("🧮 Calculating market metrics..."):
         try:
+            # Convert analysis_date to Timestamp
+            target_ts = pd.Timestamp(analysis_date)
+            
             # Pass prices and volumes for advanced metrics
-            metrics = mis.get_current_metrics(returns, prices, volumes)
+            # Calculate metrics for the SELECTED date
+            metrics = mis.get_current_metrics(returns, prices, volumes, target_date=target_ts)
             
             # Generate rolling series for charts
             turbulence_raw_series = mis.calculate_rolling_turbulence(returns)
@@ -556,7 +573,8 @@ def main():
         """, unsafe_allow_html=True)
 
     # Render Executive Summary
-    render_executive_summary(metrics, market_context, signal_color, turbulence_norm)
+    analysis_date_str = analysis_date.strftime('%Y-%m-%d')
+    render_executive_summary(metrics, market_context, signal_color, turbulence_norm, analysis_date_str)
 
     # Turbulence Attribution (Why is it high?)
     drivers = mis.get_turbulence_drivers(returns)

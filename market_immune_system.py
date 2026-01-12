@@ -723,7 +723,7 @@ class MarketImmuneSystem:
             "thresholds": "Healthy: 0-750 | Elevated: 750-950 | Critical: 950-1000"
         }
 
-    def get_current_metrics(self, returns: pd.DataFrame, prices: pd.DataFrame = None, volumes: pd.DataFrame = None) -> MarketMetrics:
+    def get_current_metrics(self, returns: pd.DataFrame, prices: pd.DataFrame = None, volumes: pd.DataFrame = None, target_date: pd.Timestamp = None) -> MarketMetrics:
         """
         Calculate all current market metrics.
         
@@ -731,29 +731,36 @@ class MarketImmuneSystem:
             returns: DataFrame of log returns
             prices: DataFrame of prices (optional, for advanced metrics)
             volumes: DataFrame of volumes (optional, for advanced metrics)
+            target_date: Date to calculate metrics for (default: latest)
             
         Returns:
             MarketMetrics containing all current values
         """
+        if target_date is None:
+            target_date = returns.index[-1]
+            
         # Get turbulence and contributions
-        turbulence_raw, contributions = self.calculate_turbulence(returns)
+        turbulence_raw, contributions = self.calculate_turbulence(returns, target_date)
         
         # Get previous day turbulence for signal
         prev_turbulence = None
-        if len(returns) > 1:
-            try:
-                prev_date = returns.index[-2]
-                prev_turbulence, _ = self.calculate_turbulence(returns, prev_date)
-            except Exception:
-                pass # If calculation fails for prev_date, prev_turbulence remains None
+        # Find index of target date
+        if target_date in returns.index:
+            loc = returns.index.get_loc(target_date)
+            if loc > 0:
+                prev_date = returns.index[loc-1]
+                try:
+                    prev_turbulence, _ = self.calculate_turbulence(returns, prev_date)
+                except Exception:
+                    pass
         
         # Get absorption ratio
-        absorption = self.calculate_absorption_ratio(returns)
+        absorption = self.calculate_absorption_ratio(returns, target_date)
         
         # Get SPY return
         spy_return = 0.0
-        if 'SPY' in returns.columns:
-            spy_return = returns['SPY'].iloc[-1] * 100  # Convert to percentage
+        if 'SPY' in returns.columns and target_date in returns.index:
+            spy_return = returns.loc[target_date, 'SPY'] * 100  # Convert to percentage
         
         # Generate primary signal
         signal, message = self.generate_signal(
@@ -772,17 +779,23 @@ class MarketImmuneSystem:
         adv_signal = "NORMAL"
         
         if prices is not None and volumes is not None:
-            # Hurst (on SPY log prices) - SLICED TO 300 DAYS
+            # Hurst (on SPY log prices) - SLICED TO 300 DAYS ending at target_date
             if "SPY" in prices.columns:
-                 log_p = np.log(prices["SPY"].iloc[-300:].values) # Fix for Hurst Anomaly
+                 # Ensure we only use data up to target_date
+                 hist_prices = prices.loc[:target_date, "SPY"]
+                 log_p = np.log(hist_prices.iloc[-300:].values) # Fix for Hurst Anomaly
                  hurst = self.get_hurst_exponent(log_p)
             
-            # Liquidity
-            liquidity_z = self.check_liquidity_stress(returns, prices, volumes, "SPY")
+            # Liquidity - Calculate for target_date
+            # check_liquidity_stress calculates for the *latest* in the passed DF
+            # So we pass sliced data
+            sliced_returns = returns.loc[:target_date]
+            sliced_prices = prices.loc[:target_date]
+            sliced_volumes = volumes.loc[:target_date]
+            liquidity_z = self.check_liquidity_stress(sliced_returns, sliced_prices, sliced_volumes, "SPY")
             
             # Advanced Signal (Pass Absorption!)
             # Calibrate turbulence roughly for the signal logic (P99 ~ 124 for df=90)
-            # This ensures the 370 threshold in get_advanced_signal makes sense
             df_assets = len(returns.columns)
             p99_est = stats.chi2.ppf(0.99, df=df_assets)
             turb_calibrated = (turbulence_raw / p99_est) * 370
@@ -790,7 +803,7 @@ class MarketImmuneSystem:
             adv_signal = self.get_advanced_signal(turb_calibrated, liquidity_z, hurst, absorption)
 
         return MarketMetrics(
-            turbulence_score=turbulence_raw,
+            turbulence_score=turbulence_raw, # Return RAW here, main.py calibrates it properly
             absorption_ratio=absorption,
             signal=signal,
             signal_message=message,
