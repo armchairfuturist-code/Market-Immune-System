@@ -750,7 +750,7 @@ def main():
     
     # Methodology & Research
     with st.expander("📚 Methodology, Lead Times & Research Sources"):
-        st.markdown("""
+        st.markdown(r"""
         ### 1. How is the Warning Level Calculated?
         The **"Critical"** warning is not arbitrary. It is derived from the **Mahalanobis Distance**, a statistical measure of how "strange" the current return vector is compared to the historical covariance matrix.
         - **Formula**: $D^2 = (r - \mu)^T \Sigma^{-1} (r - \mu)$
