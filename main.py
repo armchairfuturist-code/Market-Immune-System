@@ -124,6 +124,12 @@ def render_executive_summary(metrics: any, context: MarketContext, signal_color:
     elif metrics.signal == SignalStatus.BLUE:
         status = "OPPORTUNITY"
         
+    # 2. [CRITICAL FIX] Absorption Override
+    # If the market is locked up (Absorption > 850), it is NEVER "Healthy".
+    if metrics.absorption_ratio > 850 and status in ["HEALTHY", "OPPORTUNITY"]:
+        status = "FRAGILE"
+        signal_color = "#FF9800" # Orange override
+        
     # Interpretations
     interpretations = []
     
@@ -153,22 +159,28 @@ def render_executive_summary(metrics: any, context: MarketContext, signal_color:
     # Recommendations
     actions = []
     
-    # Check for Fragility override in Advanced Signal
-    is_fragile = "FRAGILE" in metrics.advanced_signal or "CAUTION" in metrics.advanced_signal
-    
-    if is_fragile:
-        actions = ["**CAUTION:** Rally is fragile due to high Absorption.", "Tighten stops on long positions.", "Avoid adding aggressive leverage."]
+    # Handle the new FRAGILE state (High Absorption, Low Turbulence)
+    if status == "FRAGILE":
+        actions = [
+            "**CAUTION: MELT-UP REGIME.** Prices rising on thin ice.",
+            "Diversification is failing (Absorption Critical).",
+            "Keep tight trailing stops.",
+            "Do not add aggressive leverage."
+        ]
     elif status == "HEALTHY":
-        actions = ["Normal portfolio operations", "Monitor daily but no immediate action needed", "Next check: Tomorrow's update"]
+        actions = ["Normal portfolio operations", "Monitor daily", "System functioning normally"]
     elif status == "ELEVATED":
-        actions = ["Review leverage and tight stops", "Monitor for persistence > 3 days", "Prepare hedging strategy"]
+        actions = ["Review leverage", "Monitor for persistence > 3 days", "Prepare hedges"]
     elif status == "CRITICAL":
-        actions = ["Reduce risk exposure immediately", "Hedge downside risk", "Wait for turbulence to subside"]
+        actions = ["Reduce risk exposure immediately", "Cash preservation", "Wait for turbulence to subside"]
     elif status == "OPPORTUNITY":
         actions = ["Look for high-quality entries", "Confirm with price action", "Scale in slowly"]
 
     # AI Context
-    ai_msg = "AI SECTOR SHOWING RELATIVE STRENGTH" if context.ai_market_ratio < 1.0 else "AI SECTOR LEADING STRESS"
+    if context.spx_level > context.spx_50d_ma: # Bull Market
+        ai_msg = "AI LAGGING VOLATILITY (Defensive)" if context.ai_market_ratio < 1.0 else "AI LEADING VOLATILITY (Aggressive)"
+    else: # Bear Market
+        ai_msg = "AI SHOWING RELATIVE STRENGTH" if context.ai_market_ratio < 1.0 else "AI LEADING THE DROP"
 
     # Important: No indentation in the HTML string to prevent Markdown code block rendering
     html_content = f"""
@@ -508,13 +520,7 @@ def main():
             # Context Calculations
             df_assets = len(returns.columns)
             
-            # Normalize Turbulence to 0-1000 Scale (CDF)
-            turbulence_raw = metrics.turbulence_score
-            turbulence_norm = stats.chi2.cdf(turbulence_raw, df_assets) * 1000
-            
-            t75 = stats.chi2.ppf(0.75, df_assets)
-            
-            days_elevated = mis.calculate_days_elevated(turbulence_series, t75)
+            days_elevated = mis.calculate_days_elevated(turbulence_series, 180.0)
             ai_turbulence = mis.calculate_sector_turbulence(returns, "AI & Growth")
             
             # Create Context Object
@@ -587,9 +593,15 @@ def main():
                  "- **BUY**: Turbulence Fading + Liquidity Restored + Mean Reversion (Hurst < 0.5)."
         )
     with q2:
+        hurst_delta = None
+        if metrics.hurst_exponent < 0.4 and market_context.spx_level > market_context.spx_50d_ma:
+            hurst_delta = "⚠️ Mean Reversion vs Trend Conflict"
+            
         st.metric(
             "Hurst Exponent (Fractal)",
             f"{metrics.hurst_exponent:.2f}",
+            delta=hurst_delta,
+            delta_color="inverse",
             help="**The Hurst Exponent ($H$)**: A robust variance ratio test.\n\n"
                  "- $H \\approx 0.5$: Random Walk (Healthy).\n"
                  "- $H > 0.75$: Strong Trend (Greed/FOMO). Prone to reversal.\n"
