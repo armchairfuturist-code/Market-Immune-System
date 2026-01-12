@@ -577,6 +577,47 @@ class MarketImmuneSystem:
         
         return z_score.fillna(0.0)
 
+    def get_futures_sentiment(self) -> Dict:
+        """
+        Compares Futures vs Spot to detect Backwardation (Bearish) or Contango (Bullish).
+        """
+        try:
+            # Fetch Spot and Futures
+            tickers = ["^GSPC", "ES=F", "BTC-USD", "BTC=F"]
+            data = yf.download(tickers, period="5d", progress=False)["Close"].iloc[-1]
+            
+            # 1. S&P 500 Basis
+            spx_spot = data.get("^GSPC", 0)
+            spx_fut = data.get("ES=F", 0)
+            
+            spx_basis = 0.0
+            spx_signal = "N/A"
+            
+            if spx_spot > 0 and spx_fut > 0:
+                spx_basis = ((spx_fut - spx_spot) / spx_spot) * 100
+                spx_signal = "BEARISH (Backwardation)" if spx_basis < -0.02 else "NORMAL (Contango)"
+            
+            # 2. Bitcoin Basis
+            btc_spot = data.get("BTC-USD", 0)
+            btc_fut = data.get("BTC=F", 0)
+            
+            btc_basis = 0.0
+            btc_signal = "N/A"
+            
+            if btc_spot > 0 and btc_fut > 0:
+                btc_basis = ((btc_fut - btc_spot) / btc_spot) * 100
+                btc_signal = "INSTITUTIONAL SHORTING" if btc_basis < -0.5 else "NORMAL"
+            
+            return {
+                "spx_basis": spx_basis,
+                "spx_signal": spx_signal,
+                "btc_basis": btc_basis,
+                "btc_signal": btc_signal
+            }
+        except Exception as e:
+            print(f"Futures Error: {e}")
+            return {}
+
     def get_vix_term_structure_signal(self, prices: pd.DataFrame) -> str:
         """Check Backwardation (Spot > 3M)."""
         if '^VIX' in prices.columns and '^VXV' in prices.columns:

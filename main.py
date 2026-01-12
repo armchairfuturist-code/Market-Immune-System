@@ -402,6 +402,40 @@ def get_signal_color(signal: SignalStatus) -> str:
     """Get the color for a signal status."""
     return signal.value[1]
 
+def render_catalyst_watch():
+    """Display upcoming high-impact economic/corporate events in the sidebar."""
+    # Manual high-impact list (Update quarterly)
+    catalysts = {
+        "2026-01-15": "CPI Inflation Data",
+        "2026-01-28": "FOMC Rate Decision",
+        "2026-02-06": "Non-Farm Payrolls",
+        "2026-02-20": "NVDA Earnings (AI Proxy)"
+    }
+    
+    st.markdown("### 📅 Macro Catalyst Watch")
+    today = datetime.now().date()
+    
+    upcoming = []
+    for date_str, event in catalysts.items():
+        event_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        delta = (event_date - today).days
+        
+        if 0 <= delta <= 10:
+            upcoming.append((delta, event))
+            
+    if upcoming:
+        for delta, event in upcoming:
+            color = "#FF5252" if delta <= 3 else "#FF9800"
+            st.markdown(
+                f"<div style='border-left: 4px solid {color}; padding-left: 10px; margin-bottom: 12px;'>"
+                f"<strong>{event}</strong><br>"
+                f"<span style='font-size: 0.8em; color: #aaa;'>In {delta} days</span>"
+                "</div>", 
+                unsafe_allow_html=True
+            )
+    else:
+        st.markdown("<div style='color: #666; font-size: 0.9rem;'>No high-impact events in next 10 days.</div>", unsafe_allow_html=True)
+
 @st.cache_data(ttl=3600)
 def load_market_data():
     """Load and cache market data for 1 hour."""
@@ -420,6 +454,18 @@ def main():
     # Header
     st.markdown('<h1 class="main-header">🛡️ Market Immune System</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Real-time detection of market fragility and crash signals</p>', unsafe_allow_html=True)
+    
+    # SYSTEM HORIZON BANNER
+    st.markdown("""
+    <div style="background-color: #2b3a42; border-left: 5px solid #FFD700; padding: 15px; border-radius: 5px; margin-bottom: 25px;">
+        <strong style="color: #FFD700;">⚠️ SYSTEM HORIZON & LEAD TIME</strong><br>
+        <span style="font-size: 0.9em; color: #e0e0e0;">
+        This dashboard detects <strong>structural fragility</strong>. Historically, high Turbulence scores precede price capitulation by <strong>7 to 14 days</strong>. 
+        A "Critical" signal means the market floor is brittle; it does not guarantee a drop today. 
+        <strong>Trade the Price, but Respect the Structure.</strong>
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Initialize the system
     mis = MarketImmuneSystem()
@@ -472,6 +518,9 @@ def main():
         st.info(f"Effective lookback: {mis.effective_lookback}-day window")
         
         st.markdown("---")
+        
+        # 3. Catalyst Watch
+        render_catalyst_watch()
     
     # Calculate metrics
     with st.spinner("🧮 Calculating market metrics..."):
@@ -600,6 +649,44 @@ def main():
     macro_signals = mis.get_macro_signals(returns, target_date=target_ts)
     vix_term = mis.get_vix_term_structure_signal(prices.loc[:target_ts])
     
+    # Futures & Sentiment (Real-Time Spot Check)
+    # Only show if looking at recent data, otherwise history basis is hard to reconstruct without storage
+    # We will show it but note it's current
+    futures_data = mis.get_futures_sentiment()
+    
+    st.markdown("### 🔮 Futures & Sentiment Pricing (Current)")
+    
+    f1, f2, f3 = st.columns(3)
+    
+    with f1:
+        if futures_data:
+             st.metric(
+                "S&P 500 Basis (Future vs Spot)",
+                f"{futures_data['spx_basis']:.2f}%",
+                futures_data['spx_signal'],
+                delta_color="normal" if futures_data['spx_basis'] > -0.02 else "inverse"
+             )
+        else:
+             st.metric("S&P 500 Basis", "N/A", "Data Unavailable")
+
+    with f2:
+        if futures_data:
+             st.metric(
+                "Bitcoin Basis (CME vs Spot)",
+                f"{futures_data['btc_basis']:.2f}%",
+                futures_data['btc_signal'],
+                delta_color="normal" if futures_data['btc_basis'] > -0.5 else "inverse"
+             )
+        else:
+             st.metric("Bitcoin Basis", "N/A", "Data Unavailable")
+             
+    with f3:
+        st.metric(
+            "VIX Term Structure",
+            vix_term,
+            help="Spot VIX / 3-Month VIX (VXV). If Ratio > 1.0, short-term fear is higher than long-term fear (Backwardation/Panic)."
+        )
+
     st.markdown("### ⚡ Advanced Quant Signals")
     
     # New Quant Row
