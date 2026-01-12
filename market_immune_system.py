@@ -43,8 +43,6 @@ class MarketMetrics:
     signal_message: str
     top_contributors: List[Tuple[str, float]]
     spy_return: float
-    top_contributors: List[Tuple[str, float]]
-    spy_return: float
     context: Optional[MarketContext] = None
     hurst_exponent: float = 0.5
     liquidity_z: float = 0.0
