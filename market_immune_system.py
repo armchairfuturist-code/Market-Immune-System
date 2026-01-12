@@ -919,28 +919,41 @@ class MarketImmuneSystem:
             
         return drivers
 
-    def get_macro_signals(self, returns: pd.DataFrame) -> List[Dict]:
+    def get_macro_signals(self, returns: pd.DataFrame, target_date: Optional[pd.Timestamp] = None) -> List[Dict]:
         """
         Analyze macro-economic ratios for institutional recommendations.
-        Uses cumulative returns to approximate price trends.
+        Uses cumulative returns to approximate price trends relative to the specific target_date.
         """
         signals = []
-        if len(returns) < 20:
+        
+        # 1. Handle Target Date
+        if target_date is None:
+            target_date = returns.index[-1]
+            
+        # 2. Slice Data to the Target Date (No looking into the future!)
+        # We need enough history for cumulative calc, so we take everything UP TO target_date
+        valid_returns = returns.loc[:target_date]
+        
+        if len(valid_returns) < 20:
             return signals
             
-        # Reconstruct cumulative returns (Index starts at 1.0)
-        cum_ret = np.exp(returns.cumsum())
+        # 3. Reconstruct cumulative returns
+        cum_ret = np.exp(valid_returns.cumsum())
         
-        # Helper to check trend
+        # Helper to check trend (uses the END of the sliced series)
         def check_trend(series, name, bullish_msg, bearish_msg, url, description):
-            # Simple 20-day trend (Linear Regression slope or simple Start/End)
-            recent = series.iloc[-20:]
+            # Simple 20-day trend leading up to target_date
+            recent = series.tail(20)
+            
+            # Ensure we actually have data for this specific date
+            if len(recent) < 20: return None
+            
             # Slope of normalized line
             y = recent.values
             x = np.arange(len(y))
             slope, _, _, _, _ = stats.linregress(x, y)
             
-            trend_strength = slope * 100 # Scale for readability
+            trend_strength = slope * 100 
             
             if trend_strength > 0.05:
                 return {
@@ -966,6 +979,7 @@ class MarketImmuneSystem:
         gld_rising = False
         if 'GLD' in cum_ret.columns and 'SPY' in cum_ret.columns:
             gld_ratio = cum_ret['GLD'] / cum_ret['SPY']
+            # Quick slope check
             recent_gld = gld_ratio.iloc[-20:]
             slope_gld, _, _, _, _ = stats.linregress(np.arange(len(recent_gld)), recent_gld.values)
             if slope_gld > 0: gld_rising = True

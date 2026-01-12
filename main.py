@@ -452,23 +452,23 @@ def main():
         min_date = returns.index.min().to_pydatetime()
         max_date = returns.index.max().to_pydatetime()
         
-        # 1. Historical Spot Check
-        analysis_date = st.date_input(
-            "Select Analysis Date",
-            value=max_date,
-            min_value=min_date,
-            max_value=max_date
-        )
-        
-        # 2. Chart Filter
+        # 1. Chart Filter & Analysis Date Anchor
+        # The right handle of this slider now drives the "Analysis Date"
         selected_range = st.slider(
-            "Filter Chart Range",
+            "Filter Range (Right handle = Analysis Date)",
             min_value=min_date,
             max_value=max_date,
             value=(max_date - timedelta(days=180), max_date),
             format="YYYY-MM-DD"
         )
         
+        # Determine valid calculation date (Anchor to the end of the range)
+        target_ts = pd.Timestamp(selected_range[1])
+        if target_ts not in returns.index:
+             # Fallback to nearest valid date if slider picked a weekend/holiday
+             target_ts = returns.index[returns.index <= target_ts][-1]
+        
+        st.info(f"Targeting: {target_ts.strftime('%Y-%m-%d')}")
         st.info(f"Effective lookback: {mis.effective_lookback}-day window")
         
         st.markdown("---")
@@ -476,19 +476,16 @@ def main():
     # Calculate metrics
     with st.spinner("🧮 Calculating market metrics..."):
         try:
-            # Convert analysis_date to Timestamp
-            target_ts = pd.Timestamp(analysis_date)
-            
             # Pass prices and volumes for advanced metrics
-            # Calculate metrics for the SELECTED date
+            # Calculate metrics for the SELECTED date (Slider End)
             metrics = mis.get_current_metrics(returns, prices, volumes, target_date=target_ts)
             
             # Generate rolling series for charts
             turbulence_raw_series = mis.calculate_rolling_turbulence(returns)
             
             # Calibrate Turbulence Series to 0-1000 Scale (P99 = 370)
-            # 1. Get P99 of the raw series
-            p99_raw = turbulence_raw_series.quantile(0.99)
+            # 1. Get P99 of the raw series (up to target date to avoid future bias)
+            p99_raw = turbulence_raw_series.loc[:target_ts].quantile(0.99)
             if p99_raw == 0: p99_raw = 1.0 # Avoid div by zero
             
             # 2. Scale: (Raw / P99) * 370
@@ -497,26 +494,23 @@ def main():
             turbulence_series = turbulence_series.clip(upper=1000)
             
             # Update Current Metric to match this calibrated scale
-            current_raw = metrics.turbulence_score # This is raw Mahalanobis from get_current_metrics
+            current_raw = metrics.turbulence_score 
             turbulence_norm = min((current_raw / p99_raw) * 370, 1000.0)
             
-            # Override metric signal for display consistency
-            # (Note: get_current_metrics already used the updated thresholds in market_immune_system.py, so signal is correct)
-            
-            # SPX Price Series (Using ^GSPC from prices df)
+            # SPX Price Series
             if "^GSPC" in prices.columns:
                 spx_full = prices["^GSPC"]
             elif "SPY" in prices.columns:
-                spx_full = prices["SPY"] * 10 # Fallback proxy
+                spx_full = prices["SPY"] * 10
             else:
                 spx_full = pd.Series(0, index=returns.index)
                 
             # Calculate 50-MA
             spx_ma_full = spx_full.rolling(window=50).mean()
             
-            corr_matrix = mis.calculate_rolling_correlation(returns)
+            corr_matrix = mis.calculate_rolling_correlation(returns.loc[:target_ts])
             
-            # Amihud Z-Score Series for Chart 2 (Vectorized)
+            # Amihud Z-Score Series (Vectorized)
             illiq_series = mis.calculate_rolling_liquidity(returns, prices, volumes, "SPY")
 
             # Align all series to the valid turbulence window
@@ -535,16 +529,25 @@ def main():
             illiq_filtered = illiq_series.loc[mask]
             
             # Context Calculations
-            df_assets = len(returns.columns)
+            # Fetch context data for the TARGET date
+            # We already have spx_full, spx_ma_full. We just need to slice them.
+            current_spx = spx_full.loc[target_ts]
+            current_ma = spx_ma_full.loc[target_ts]
             
-            days_elevated = mis.calculate_days_elevated(turbulence_series, 180.0)
-            ai_turbulence = mis.calculate_sector_turbulence(returns, "AI & Growth")
+            # VIX fallback (vix fetched from load_context_data is current real-time)
+            # For historical accuracy, we should use prices['^VIX'] if available
+            current_vix = vix # default
+            if '^VIX' in prices.columns:
+                 current_vix = prices.loc[target_ts, '^VIX']
+            
+            days_elevated = mis.calculate_days_elevated(turbulence_series.loc[:target_ts], 180.0)
+            ai_turbulence = mis.calculate_sector_turbulence(returns.loc[:target_ts], "AI & Growth")
             
             # Create Context Object
             market_context = MarketContext(
-                spx_level=spx,
-                spx_50d_ma=spx_ma,
-                vix_level=vix,
+                spx_level=current_spx,
+                spx_50d_ma=current_ma,
+                vix_level=current_vix,
                 days_elevated=days_elevated,
                 ai_turbulence=ai_turbulence,
                 ai_market_ratio=ai_turbulence / (metrics.turbulence_score + 1e-6)
@@ -573,11 +576,11 @@ def main():
         """, unsafe_allow_html=True)
 
     # Render Executive Summary
-    analysis_date_str = analysis_date.strftime('%Y-%m-%d')
+    analysis_date_str = target_ts.strftime('%Y-%m-%d')
     render_executive_summary(metrics, market_context, signal_color, turbulence_norm, analysis_date_str)
 
     # Turbulence Attribution (Why is it high?)
-    drivers = mis.get_turbulence_drivers(returns)
+    drivers = mis.get_turbulence_drivers(returns.loc[:target_ts])
     with st.expander("🔍 Why is Turbulence High? (Top Contributors)"):
         st.markdown(
             "These assets showed the most extreme moves relative to their own history (Z-Score), "
@@ -594,8 +597,8 @@ def main():
                 )
 
     # Institutional Macro Analysis
-    macro_signals = mis.get_macro_signals(returns)
-    vix_term = mis.get_vix_term_structure_signal(prices)
+    macro_signals = mis.get_macro_signals(returns, target_date=target_ts)
+    vix_term = mis.get_vix_term_structure_signal(prices.loc[:target_ts])
     
     st.markdown("### ⚡ Advanced Quant Signals")
     
