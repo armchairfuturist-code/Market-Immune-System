@@ -63,7 +63,7 @@ class MarketImmuneSystem:
             "SPY", "QQQ", "DIA", "IWM", "VXX", "EEM", "EFA", "TLT", "IEF", "SHY",
             "LQD", "HYG", "BND", "AGG", "GLD", "SLV", "CPER", "USO", "UNG", "DBC",
             "PALL", "UUP", "FXE", "FXY", "FXB", "CYB", "XLF", "XLE", "XLK", "XLY",
-            "XLI", "XLB", "XLRE", "^VIX", "^VIX3M"
+            "XLI", "XLB", "XLRE", "^VIX", "^VIX3M", "^TNX", "^IRX"
         ],
         "Crypto": [
             "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD",
@@ -488,6 +488,58 @@ class MarketImmuneSystem:
             return dist_sq
         except:
              return 0.0
+
+    def get_market_cycle_status(self, returns: pd.DataFrame) -> Dict:
+        """
+        Determines the current Economic Cycle Phase based on Sector Rotation.
+        Logic: Compare 3-month Relative Strength (RS) of key sectors vs SPY.
+        """
+        # Define Cycle Proxies (Your Cheat Sheet)
+        cycles = {
+            "Early Cycle": ["XLF", "XLY", "IWM"],     # Financials, Discretionary, Small Caps
+            "Mid Cycle":   ["XLK", "XLI"],            # Tech, Industrials
+            "Late Cycle":  ["XLE", "XLB", "XLP"],     # Energy, Materials, Staples
+            "Recession":   ["XLU", "XLV", "SHY"]      # Utilities, Healthcare, Cash/Bonds
+        }
+        
+        # Calculate 60-day (approx 3-month) cumulative return for all assets
+        # Ensure we look at the END of the data
+        if len(returns) < 60:
+             return {}
+             
+        recent_ret = np.exp(returns.tail(60).cumsum().iloc[-1]) - 1
+        
+        if "SPY" not in recent_ret:
+            return {}
+            
+        spy_perf = recent_ret["SPY"]
+        
+        cycle_scores = {}
+        
+        for phase, tickers in cycles.items():
+            # Filter for tickers we actually have data for
+            valid = [t for t in tickers if t in recent_ret]
+            if not valid:
+                continue
+                
+            # Calculate Average Relative Performance vs SPY
+            # Positive = Outperforming SPY
+            rel_perf = [(recent_ret[t] - spy_perf) for t in valid]
+            avg_outperformance = np.mean(rel_perf) * 100 # percentage
+            
+            cycle_scores[phase] = avg_outperformance
+            
+        if not cycle_scores:
+            return {}
+            
+        # Find the winning cycle
+        current_phase = max(cycle_scores, key=cycle_scores.get)
+        
+        return {
+            "current_phase": current_phase,
+            "strength": cycle_scores[current_phase],
+            "details": cycle_scores
+        }
 
     @staticmethod
     def get_hurst_exponent(time_series: np.array, max_lag: int = 20) -> float:

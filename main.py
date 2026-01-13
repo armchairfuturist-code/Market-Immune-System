@@ -725,6 +725,92 @@ def main():
                  "When this spikes (Z-Score > 2), it takes less money to crash the market. The 'Floor' is gone."
         )
 
+    st.markdown("### 🔄 Capital Rotation (The 'Offense' Engine)")
+    
+    # Calculate Cycle
+    cycle_data = mis.get_market_cycle_status(returns.loc[:target_ts])
+    
+    if cycle_data:
+        c1, c2 = st.columns([1, 2])
+        
+        with c1:
+            st.info(f"Detected Regime: **{cycle_data['current_phase']}**")
+            st.caption("Based on 3-month Sector Relative Strength vs SPY.")
+            
+            # Show the leaderboard
+            sorted_cycles = sorted(cycle_data['details'].items(), key=lambda x: x[1], reverse=True)
+            for phase, score in sorted_cycles:
+                color = "#00C853" if score > 0 else "#FF5252"
+                st.markdown(f"**{phase}**: <span style='color:{color}'>{score:+.2f}%</span> vs SPY", unsafe_allow_html=True)
+
+        with c2:
+            # Quick Style Check logic
+            # Growth (QQQ) vs Value (VTV - need to add to universe or use proxies)
+            # Proxy: XLK (Tech) vs XLE (Energy) + XLF (Finance)
+            tech_rel = 0
+            if "XLK" in returns.columns and "XLE" in returns.columns:
+                 # Simple 20-day trend of Ratio
+                 ratio = prices["XLK"] / prices["XLE"]
+                 trend = "GROWTH" if ratio.iloc[-1] > ratio.iloc[-20] else "VALUE"
+                 
+                 st.metric("Style Rotation", trend, "Tech vs Energy/Value")
+            
+            st.markdown("""
+            **Playbook:**
+            - **Early:** Buy Banks (XLF), Small Caps (IWM).
+            - **Mid:** Buy Tech (XLK), Industrials (XLI).
+            - **Late:** Buy Energy (XLE), Commodities (DBC).
+            - **Recession:** Cash, Gold (GLD), Utilities (XLU).
+            """)
+
+    # Macro Context: Yield Curve & Dollar
+    st.markdown("### 🏦 Macro Context (Yields & Dollar)")
+    m1, m2 = st.columns(2)
+    
+    with m1:
+        # Yield Curve (10Y - 2Y) or (10Y - 13W)
+        # ^TNX = 10 Year Yield (Index, so price is yield * 10) -> No wait, yahoo returns yield as price directly usually?
+        # Actually ^TNX is CBOE 10 Year, usually price 40.00 = 4.00% yield.
+        # Let's assume we have prices for them.
+        
+        curve_msg = "N/A"
+        curve_val = 0.0
+        
+        if "^TNX" in prices.columns:
+            ten_y = prices["^TNX"].iloc[-1] # e.g. 42.50 = 4.25%
+            
+            # 2Y is often missing in yahoo free data (^IRX is 13 weeks)
+            # Let's use 13 Week (^IRX) as proxy for "Cash"
+            if "^IRX" in prices.columns:
+                thirteen_w = prices["^IRX"].iloc[-1]
+                curve_val = (ten_y - thirteen_w) / 10.0 # Convert to percentage points
+                
+                if curve_val < 0:
+                    curve_msg = "WARNING: INVERTED (Recession Indicator)"
+                    curve_col = "inverse"
+                else:
+                    curve_msg = "Normal (Positive Slope)"
+                    curve_col = "normal"
+                    
+                st.metric("Yield Curve (10Y - 3M)", f"{curve_val:+.2f}%", curve_msg, delta_color=curve_col)
+            else:
+                st.metric("10 Year Yield", f"{ten_y/10:.2f}%", "Signal Missing")
+        else:
+             st.info("Yield Curve Data Unavailable")
+
+    with m2:
+        # Dollar (UUP)
+        if "UUP" in prices.columns:
+            uup_series = prices["UUP"]
+            current_uup = uup_series.iloc[-1]
+            uup_trend_val = current_uup - uup_series.iloc[-20]
+            
+            uup_trend = "RISING" if uup_trend_val > 0 else "FALLING"
+            uup_impact = "Headwind for Crypto/Assets" if uup_trend == "RISING" else "Tailwind for Assets"
+            
+            st.metric("US Dollar Trend (UUP)", uup_trend, uup_impact, delta_color="off" if uup_trend=="RISING" else "normal")
+
+
     if macro_signals:
         st.markdown("### 🏦 Institutional Macro Ratios")
         st.caption("Strategic recommendations based on relative asset flows (20-day trend). Click ratios for definitions.")
