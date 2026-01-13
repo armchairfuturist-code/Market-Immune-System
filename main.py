@@ -30,14 +30,15 @@ st.set_page_config(
 st.markdown(textwrap.dedent("""
 <style>
     .main-header {
+        font-family: 'Helvetica Neue', sans-serif;
         font-size: 2.5rem;
-        font-weight: 700;
+        font-weight: 800;
         color: #00C853 !important;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0px;
     }
     .sub-header {
-        font-size: 1.2rem;
-        color: #AAA;
+        font-size: 1.1rem;
+        color: #888;
         margin-bottom: 2rem;
     }
     .metric-card {
@@ -80,21 +81,6 @@ st.markdown(textwrap.dedent("""
         border-top: 1px solid #333;
         margin: 1.5rem 0;
     }
-    .summary-card {
-        background-color: #FDFBF0; /* Beige/Paper feel from screenshot */
-        color: #212121;
-        padding: 1.5rem;
-        border-radius: 8px;
-        border-left: 5px solid #333;
-        font-family: 'Courier New', monospace;
-        margin-bottom: 2rem;
-    }
-    .summary-header {
-        font-weight: 700;
-        border-bottom: 2px solid #555;
-        padding-bottom: 0.5rem;
-        margin-bottom: 1rem;
-    }
 </style>
 """).strip(), unsafe_allow_html=True)
 
@@ -112,122 +98,98 @@ def load_context_data():
     mis = MarketImmuneSystem()
     return mis.fetch_market_context_data()
 
-def render_executive_summary(metrics: any, context: MarketContext, signal_color: str, turbulence_norm: float, analysis_date: str):
-    """Render the text-based executive summary."""
-    
-    # Determine Status String
-    status = "HEALTHY"
-    if metrics.signal == SignalStatus.ORANGE:
-        status = "ELEVATED"
-    elif metrics.signal in [SignalStatus.RED, SignalStatus.BLACK]:
-        status = "CRITICAL"
-    elif metrics.signal == SignalStatus.BLUE:
-        status = "OPPORTUNITY"
-        
-    # 2. [CRITICAL FIX] Absorption Override
-    # If the market is locked up (Absorption > 850), it is NEVER "Healthy".
-    if metrics.absorption_ratio > 850 and status in ["HEALTHY", "OPPORTUNITY"]:
-        status = "FRAGILE"
-        signal_color = "#FF9800" # Orange override
-        
-    # Interpretations
-    interpretations = []
-    
-    # Turbulence Interpretation (Calibrated Scale: Warning=180, Critical=370)
-    if turbulence_norm < 180:
-         interpretations.append("✓ Market showing normal stress levels (< 180)")
-    elif turbulence_norm > 370:
-        interpretations.append(f"⚠️ **Critical turbulence ({turbulence_norm:.0f}/1000)**: Market behavior is extreme (> 99th Percentile).")
-    else:
-        interpretations.append(f"⚠️ Elevated turbulence ({turbulence_norm:.0f}/1000): Above Warning Level (180).")
-    
-    # Divergence Check (The "Low VIX" Trap)
-    if metrics.signal == SignalStatus.RED:
-        interpretations.append("⚠️ **DIVERGENCE DETECTED**: Market rising on broken structure (Price > 50MA + Turb > 180).")
+def render_tactical_hud(metrics: any, context: MarketContext, cycle_data: dict, analysis_date: str):
+    """
+    Renders the 'Head-Up Display' (HUD) - Action-Oriented Version.
+    """
+    # 1. Theme Logic
+    theme_color = "#00C853" # Green
+    if metrics.signal == SignalStatus.ORANGE: theme_color = "#FF9800"
+    elif metrics.signal in [SignalStatus.RED, SignalStatus.BLACK]: theme_color = "#FF5252"
+    elif metrics.signal == SignalStatus.BLUE: theme_color = "#2196F3"
 
-    # Absorption Check
+    # 2. Novice-Friendly Narrative (The "What is happening?")
+    regime_title = "NORMAL MARKET"
+    regime_desc = "Conditions are safe. Standard investing applies."
+    
     if metrics.absorption_ratio > 850:
-        interpretations.append("⚠️ **FRAGILITY CRITICAL**: Absorption Ratio > 850. Assets moving in lockstep. Diversification failing.")
-    else:
-        interpretations.append("✓ Absorption Rate is healthy (Diversification working)")
+        if context.spx_level > context.spx_50d_ma:
+            regime_title = "FRAGILE RALLY (MELT-UP)"
+            regime_desc = "Prices are going up, but the market is moving in lockstep. <strong>A sudden drop is likely within 2 weeks.</strong>"
+        else:
+            regime_title = "SYSTEMIC SELL-OFF"
+            regime_desc = "Everything is falling together. Cash is the only safe haven."
+    elif metrics.signal == SignalStatus.RED:
+        regime_title = "TRAP DETECTED (DIVERGENCE)"
+        regime_desc = "The market looks good on the surface, but internal structure is breaking. <strong>Do not chase rallies.</strong>"
+    elif metrics.signal == SignalStatus.BLACK:
+        regime_title = "CRASH ALERT"
+        regime_desc = "Extreme volatility. Protect capital immediately."
         
-    if context.spx_level > context.spx_50d_ma:
-        interpretations.append("✓ Price Trend: Bullish (Above 50-day MA)")
-    else:
-        interpretations.append("⚠️ Price Trend: Bearish (Below 50-day MA)")
-
-    # Recommendations
-    actions = []
+    # 3. Actionable Playbook (The "What do I buy?")
+    buy_recommendation = "Diversified Index (SPY)"
+    narrative_reason = "No clear trend."
     
-    # Check for Fragility override in Advanced Signal
-    is_fragile = "FRAGILE" in metrics.advanced_signal or "CAUTION" in metrics.advanced_signal
-    
-    if is_fragile:
-        actions = [
-            "**CAUTION: MELT-UP REGIME.** Prices rising on thin ice.",
-            "Diversification is failing (Absorption Critical).",
-            "Keep tight trailing stops.",
-            "Do not add aggressive leverage."
-        ]
-    elif status == "HEALTHY":
-        actions = ["Normal portfolio operations", "Monitor daily", "System functioning normally"]
-    elif status == "ELEVATED":
-        actions = ["Review leverage", "Monitor for persistence > 3 days", "Prepare hedges"]
-    elif status == "CRITICAL":
-        actions = ["Reduce risk exposure immediately", "Cash preservation", "Wait for turbulence to subside"]
-    elif status == "OPPORTUNITY":
-        actions = ["Look for high-quality entries", "Confirm with price action", "Scale in slowly"]
+    if cycle_data:
+        # Use the plain English list we added to market_immune_system.py
+        buy_recommendation = f"<strong>{cycle_data['actionable_tickers']}</strong>"
+        narrative_reason = cycle_data['narrative']
 
-    # AI Context
-    if context.spx_level > context.spx_50d_ma: # Bull Market
-        ai_msg = "AI LAGGING VOLATILITY (Defensive)" if context.ai_market_ratio < 1.0 else "AI LEADING VOLATILITY (Aggressive)"
-    else: # Bear Market
-        ai_msg = "AI SHOWING RELATIVE STRENGTH" if context.ai_market_ratio < 1.0 else "AI LEADING THE DROP"
-
-    # Important: No indentation in the HTML string to prevent Markdown code block rendering
-    header_title = f"HISTORICAL IMMUNE SYSTEM STATUS - {analysis_date}" if analysis_date != datetime.now().strftime('%Y-%m-%d') else f"CURRENT IMMUNE SYSTEM STATUS - {analysis_date}"
+    # 4. Plain English Tactical Stance
+    stop_loss = "Use Tight Stops (Protect Profits)" if metrics.signal in [SignalStatus.ORANGE, SignalStatus.RED] else "Standard Stops"
+    leverage = "Reduce Leverage (High Risk)" if metrics.turbulence_score > 370 else "Leverage OK"
+    # Simplify "Hedge Tails" to something understandable
+    hedging = "Consider Cash/Gold" if metrics.absorption_ratio > 850 else "Stay Invested"
     
-    html_content = f"""
-<div class="summary-card">
-<div class="summary-header">📋 {header_title}</div>
-<div style="margin-bottom: 1rem;">
-<strong>WARNING LEVEL:</strong> <span style="background-color: {signal_color}; color: white; padding: 2px 8px; border-radius: 4px;">{status}</span>
-</div>
-<div style="margin-bottom: 1rem;">
-<strong>📉 Current Metrics:</strong>
-<ul style="margin-top: 5px;">
-<li>Market Turbulence: {turbulence_norm:.0f}/1000 <span style="color:#888; font-size:0.8em;">(Raw: {metrics.turbulence_score:.1f})</span></li>
-<li>Days Elevated: {context.days_elevated} days</li>
-<li>SPX Level: {context.spx_level:.2f} ({'ABOVE' if context.spx_level > context.spx_50d_ma else 'BELOW'} 50-day MA)</li>
-<li>VIX Level: {context.vix_level:.2f}</li>
-<li>Divergence Active: {'Yes' if metrics.signal == SignalStatus.RED else 'No'}</li>
-</ul>
-</div>
-<div style="margin-bottom: 1rem;">
-<strong>🧠 Interpretation:</strong>
-<ul style="margin-top: 5px;">
-{''.join([f'<li>{i}</li>' for i in interpretations])}
-</ul>
-</div>
-<div style="margin-bottom: 1rem;">
-<strong>🛡️ RECOMMENDED ACTIONS:</strong>
-<ul style="margin-top: 5px;">
-{''.join([f'<li>{a}</li>' for a in actions])}
-</ul>
-</div>
+    # --- RENDER THE HUD ---
+    hud_html = f"""<div style="
+background-color: #1E1E2E; 
+border-left: 6px solid {theme_color}; 
+padding: 20px; 
+border-radius: 8px; 
+margin-bottom: 25px;
+box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+font-family: sans-serif;">
+<div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; padding-bottom: 15px; margin-bottom: 15px;">
 <div>
-<strong>🤖 AI SECTOR CONTEXT:</strong>
-<ul style="margin-top: 5px;">
-<li>AI Turbulence: {context.ai_turbulence:.1f} (Raw)</li>
-<li>Market Score: {turbulence_norm:.0f}/1000</li>
-<li>Ratio: {context.ai_market_ratio:.2f}x</li>
-<br>
-<li>ℹ️ {ai_msg}</li>
+<span style="font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 1px;">MARKET STATUS ({analysis_date})</span>
+<h2 style="margin: 0; color: {theme_color}; font-size: 1.8rem; font-weight: 700;">{regime_title}</h2>
+</div>
+<div style="text-align: right;">
+<span style="background-color: #333; color: #fff; padding: 6px 14px; border-radius: 4px; font-size: 0.85rem; border: 1px solid #444;">
+⏱️ Next Signal: <strong>7-14 Days</strong>
+</span>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;">
+<!-- COLUMN 1: PLAIN ENGLISH ANALYSIS -->
+<div>
+<strong style="color: #DDD; font-size: 0.95rem;">🔎 What is happening?</strong>
+<p style="color: #AAA; font-size: 0.9rem; margin-top: 5px; line-height: 1.4;">{regime_desc}</p>
+<div style="font-size: 0.8rem; color: #666; margin-top: 8px;">
+Risk Score: <span style="color: #DDD;">{metrics.turbulence_score:.0f}</span>/1000
+</div>
+</div>
+<!-- COLUMN 2: TACTICAL STANCE -->
+<div style="border-left: 1px solid #333; padding-left: 20px;">
+<strong style="color: #DDD; font-size: 0.95rem;">🛡️ Safety Checks</strong>
+<ul style="color: #AAA; font-size: 0.9rem; margin-top: 5px; padding-left: 20px; line-height: 1.6;">
+<li>{stop_loss}</li>
+<li>{leverage}</li>
+<li>{hedging}</li>
 </ul>
 </div>
+<!-- COLUMN 3: THE BUY SIGNAL -->
+<div style="border-left: 1px solid #333; padding-left: 20px;">
+<strong style="color: #DDD; font-size: 0.95rem;">🚀 What to Buy Now?</strong>
+<p style="color: #AAA; font-size: 0.9rem; margin-top: 5px;">{narrative_reason}</p>
+<div style="font-size: 0.9rem; color: {theme_color}; margin-top: 5px; background-color: rgba(255,255,255,0.05); padding: 10px; border-radius: 4px;">
+{buy_recommendation}
 </div>
-"""
-    st.markdown(html_content, unsafe_allow_html=True)
+</div>
+</div>
+</div>"""
+    st.markdown(hud_html, unsafe_allow_html=True)
 
 
 def create_health_monitor_chart(
@@ -455,17 +417,8 @@ def main():
     st.markdown('<h1 class="main-header">🛡️ Market Immune System</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Real-time detection of market fragility and crash signals</p>', unsafe_allow_html=True)
     
-    # SYSTEM HORIZON BANNER
-    st.markdown("""
-    <div style="background-color: #2b3a42; border-left: 5px solid #FFD700; padding: 15px; border-radius: 5px; margin-bottom: 25px;">
-        <strong style="color: #FFD700;">⚠️ SYSTEM HORIZON & LEAD TIME</strong><br>
-        <span style="font-size: 0.9em; color: #e0e0e0;">
-        This dashboard detects <strong>structural fragility</strong>. Historically, high Turbulence scores precede price capitulation by <strong>7 to 14 days</strong>. 
-        A "Critical" signal means the market floor is brittle; it does not guarantee a drop today. 
-        <strong>Trade the Price, but Respect the Structure.</strong>
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
+
+
     
     # Initialize the system
     mis = MarketImmuneSystem()
@@ -624,9 +577,12 @@ def main():
         - {report['recommended_action']}
         """, unsafe_allow_html=True)
 
-    # Render Executive Summary
+    # Calculate Cycle Data EARLY for the HUD
+    cycle_data = mis.get_market_cycle_status(returns.loc[:target_ts])
+    
+    # Render The New Tactical HUD
     analysis_date_str = target_ts.strftime('%Y-%m-%d')
-    render_executive_summary(metrics, market_context, signal_color, turbulence_norm, analysis_date_str)
+    render_tactical_hud(metrics, market_context, cycle_data, analysis_date_str)
 
     # Turbulence Attribution (Why is it high?)
     drivers = mis.get_turbulence_drivers(returns.loc[:target_ts])
@@ -654,37 +610,47 @@ def main():
     # We will show it but note it's current
     futures_data = mis.get_futures_sentiment()
     
-    st.markdown("### 🔮 Futures & Sentiment Pricing (Current)")
+    st.markdown("### 🔮 Market Sentiment (What Pros are betting on)")
     
     f1, f2, f3 = st.columns(3)
     
     with f1:
         if futures_data:
+             # Translate Basis to Sentiment
+             sent_label = "Bullish (Normal)"
+             if "Backwardation" in futures_data['spx_signal']:
+                 sent_label = "Bearish (Panic)"
+             
              st.metric(
-                "S&P 500 Basis (Future vs Spot)",
-                f"{futures_data['spx_basis']:.2f}%",
-                futures_data['spx_signal'],
-                delta_color="normal" if futures_data['spx_basis'] > -0.02 else "inverse"
+                "S&P 500 Sentiment",
+                f"{futures_data['spx_basis']:.2f}% Premium",
+                sent_label,
+                delta_color="normal" if futures_data['spx_basis'] > -0.02 else "inverse",
+                help="If Positive: Pros are paying extra to buy. If Negative: Pros are paying extra to sell (Panic)."
              )
         else:
-             st.metric("S&P 500 Basis", "N/A", "Data Unavailable")
+             st.metric("S&P 500 Sentiment", "N/A", "Data Unavailable")
 
     with f2:
         if futures_data:
              st.metric(
-                "Bitcoin Basis (CME vs Spot)",
-                f"{futures_data['btc_basis']:.2f}%",
+                "Bitcoin Sentiment",
+                f"{futures_data['btc_basis']:.2f}% Premium",
                 futures_data['btc_signal'],
                 delta_color="normal" if futures_data['btc_basis'] > -0.5 else "inverse"
              )
         else:
-             st.metric("Bitcoin Basis", "N/A", "Data Unavailable")
+             st.metric("Bitcoin Sentiment", "N/A", "Data Unavailable")
              
     with f3:
+        # Simplify VIX
+        vix_clean = vix_term.split(" ")[0] # Just "Contango" or "Backwardation"
+        vix_human = "Normal Fear" if "Contango" in vix_clean else "Extreme Panic"
+        
         st.metric(
-            "VIX Term Structure",
-            vix_term,
-            help="Spot VIX / 3-Month VIX (VXV). If Ratio > 1.0, short-term fear is higher than long-term fear (Backwardation/Panic)."
+            "Volatility Outlook",
+            vix_human,
+            help="Normal Fear = Safe to invest. Extreme Panic = Crash imminent or happening."
         )
 
     st.markdown("### ⚡ Advanced Quant Signals")
@@ -706,29 +672,27 @@ def main():
             hurst_delta = "⚠️ Trend Conflict (Mean Reversion)"
             
         st.metric(
-            "Hurst Exponent (Fractal)",
+            "Trend Quality (Hurst)",
             f"{metrics.hurst_exponent:.2f}",
             delta=hurst_delta,
             delta_color="inverse",
-            help="**The Hurst Exponent ($H$)**: A robust variance ratio test.\n\n"
-                 "- $H \\approx 0.5$: Random Walk (Healthy).\n"
-                 "- $H > 0.75$: Strong Trend (Greed/FOMO). Prone to reversal.\n"
-                 "- $H \\to 1.0$: Supercritical State. Slightest shock triggers cascade."
+            help="**Trend Quality**: Is the market trending smoothly or becoming fragile?\n\n"
+                 "- Score > 0.75: Crowded Trade (Risk of Reversal).\n"
+                 "- Score ~ 0.50: Normal Random Movement."
         )
     with q3:
         st.metric(
-            "Liquidity Stress (Alihud Z)",
+            "Market Liquidity",
             f"{metrics.liquidity_z:.1f}σ",
             delta="Normal" if metrics.liquidity_z < 1.0 else "Thin",
             delta_color="inverse",
-            help="**Amihud Illiquidity ($ILLIQ$)**: $|Return_t| / (Volume_t \\times Price_t)$.\n\n"
-                 "When this spikes (Z-Score > 2), it takes less money to crash the market. The 'Floor' is gone."
+            help="**Liquidity**: How easily can you sell?\n\n"
+                 "High Z-Score (>2.0) means liquidity is evaporating. Small sells cause big crashes."
         )
 
     st.markdown("### 🔄 Capital Rotation (The 'Offense' Engine)")
     
-    # Calculate Cycle
-    cycle_data = mis.get_market_cycle_status(returns.loc[:target_ts])
+    # Cycle data is already calculated above for HUD
     
     if cycle_data:
         c1, c2 = st.columns([1, 2])
@@ -745,15 +709,23 @@ def main():
 
         with c2:
             # Quick Style Check logic
-            # Growth (QQQ) vs Value (VTV - need to add to universe or use proxies)
-            # Proxy: XLK (Tech) vs XLE (Energy) + XLF (Finance)
-            tech_rel = 0
-            if "XLK" in returns.columns and "XLE" in returns.columns:
-                 # Simple 20-day trend of Ratio
+            # Growth (VUG) vs Value (VTV)
+            # Proxy Fallback: XLK (Tech) vs XLE (Energy)
+            
+            style_trend = "NEUTRAL"
+            style_label = "VUG vs VTV"
+            
+            if "VUG" in returns.columns and "VTV" in returns.columns:
+                ratio = prices["VUG"] / prices["VTV"]
+                style_trend = "GROWTH" if ratio.iloc[-1] > ratio.iloc[-20] else "VALUE"
+                style_label = "VUG (Growth) vs VTV (Value)"
+            elif "XLK" in returns.columns and "XLE" in returns.columns:
+                 # Fallback Proxy
                  ratio = prices["XLK"] / prices["XLE"]
-                 trend = "GROWTH" if ratio.iloc[-1] > ratio.iloc[-20] else "VALUE"
+                 style_trend = "GROWTH" if ratio.iloc[-1] > ratio.iloc[-20] else "VALUE"
+                 style_label = "Tech (XLK) vs Energy (XLE)"
                  
-                 st.metric("Style Rotation", trend, "Tech vs Energy/Value")
+            st.metric("Style Rotation", style_trend, style_label)
             
             st.markdown("""
             **Playbook:**
