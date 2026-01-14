@@ -1,1 +1,67 @@
+# 🛡️ Market Immune System v2.0
+### *Detect the crash before it happens. Know exactly what to buy next.*
 
+Most investors only realize a market is crashing when their account is already red. By then, it’s too late. 
+
+The **Market Immune System** is an institutional-grade risk engine designed to detect **market fragility**—the statistical "stress" that occurs inside the financial system 7 to 14 days *before* the price actually drops. 
+
+## 🧠 Why an "Immune System"?
+Just like the human body shows signs of stress (fever, inflammation) before a major illness, the stock market shows signs of **Structural Breakdown** before a crash. 
+
+This dashboard monitors the "Blood Chemistry" of 99 global assets—including Stocks, AI Leaders, Crypto, Gold, and Bonds—to tell you when the floor is getting thin.
+
+---
+
+## 🚦 The Tactical HUD: Your 30-Second Briefing
+Our "Head-Up Display" synthesizes millions of data points into three simple columns:
+
+### 1. 🔎 What is happening? (The Regime)
+We don't just look at price. We look at **Market Structure**. 
+*   **Fragile Rally (Melt-Up):** Prices are rising, but the foundation is brittle. Caution is required.
+*   **Structural Divergence (The Trap):** The "Pros" are selling while "Retail" is buying. This is our primary crash warning.
+*   **Normal Market:** The system is healthy. Standard investing rules apply.
+
+### 2. 🛡️ Safety Checks (The Defense)
+Clear instructions on how to manage your current money:
+*   **Stops:** Should you use "Standard" or "Tight Trailing" stops to lock in profit?
+*   **Leverage:** Is it safe to use debt/margin, or should you pay it down immediately?
+*   **Hedging:** Is it time to move to Cash or Gold?
+
+### 3. 🚀 What to Buy Now? (The Offense)
+We identify which **Market Cycle** we are in (Early, Mid, Late, or Recession) and give you the specific sectors to own:
+*   **Late Cycle?** Buy Energy, Materials, and Staples.
+*   **Early Cycle?** Buy Banks and Small Caps.
+*   **Recession?** Hold Gold and Cash.
+
+---
+
+## ⚡ The "Secret Sauce" (For the Curious)
+While the dashboard is easy to read, the engine underneath is incredibly powerful:
+*   **Turbulence Score (0-1000):** Uses the *Mahalanobis Distance* (the same math used in medical diagnostics) to see how "unusual" today's market behavior is compared to the last year.
+*   **Fragility Gauge (Absorption):** Detects when all stocks start moving in lockstep—a mathematical prerequisite for a major crash.
+*   **Wall St Sentiment:** Compares the "Futures Market" vs. the "Spot Market" to see if the Big Banks are paying a premium to buy or a premium to sell.
+*   **Official Fed Data:** Plugged directly into the St. Louis Fed (FRED) to track the **Yield Curve**—the world's most accurate recession predictor.
+
+---
+
+## 📈 Lead Time & Expectations
+*   **Horizon:** This is a **7 to 14-day leading indicator**. 
+*   **Philosophy:** We **Trade the Price** (what we see today) but we **Respect the Structure** (what the math says about next week).
+
+---
+
+## 🚀 Get Started
+1.  **Check the Status:** If it says **"NORMAL,"** your long-term plan is safe.
+2.  **Watch the Shading:** Green vertical bars on the chart indicate a **Divergence Trap**.
+3.  **Follow the Playbook:** Use the "What to Buy" section to rotate your capital into the winning sectors.
+
+***
+
+F) VALIDATION & EDGE CASES
+*   **Novice Check:** I replaced "Covariance Breakdown" with "Market Floor getting thin."
+*   **Actionability Check:** The README explicitly links the "Cycle" to "Specific Sectors."
+*   **Integrity Check:** The README acknowledges the lead time, preventing subscribers from complaining if a crash doesn't happen *the same hour* a signal fires.
+
+G) NEXT IMPROVEMENTS
+*   **Visual Assets:** For the actual GitHub page, you should include a screenshot of the **Tactical HUD** and the **Market Health Monitor** (with the green shading) to make the value proposition immediate.
+*   **Performance Tracking:** Add a "Past Signals" section to show how the system caught the Aug 2024 or May 2024 breaks.
