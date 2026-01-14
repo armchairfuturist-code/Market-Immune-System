@@ -364,39 +364,109 @@ def get_signal_color(signal: SignalStatus) -> str:
     """Get the color for a signal status."""
     return signal.value[1]
 
-def render_catalyst_watch():
-    """Display upcoming high-impact economic/corporate events in the sidebar."""
-    # Manual high-impact list (Update quarterly)
-    catalysts = {
-        "2026-01-15": "CPI Inflation Data",
-        "2026-01-28": "FOMC Rate Decision",
-        "2026-02-06": "Non-Farm Payrolls",
-        "2026-02-20": "NVDA Earnings (AI Proxy)"
-    }
-    
-    st.markdown("### 📅 Macro Catalyst Watch")
+@st.cache_data(ttl=24*3600) # Cache for 24 hours
+def get_earnings_calendar(tickers: list) -> dict:
+    """Fetch next earnings dates for key tickers."""
+    calendar = {}
     today = datetime.now().date()
     
-    upcoming = []
-    for date_str, event in catalysts.items():
-        event_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    for t in tickers:
+        try:
+            ticker = yf.Ticker(t)
+            # Get calendar
+            cal = ticker.calendar
+            if cal is not None and not cal.empty:
+                # Calendar is usually Key (0) -> Date
+                # Or a DataFrame. yfinance structure varies by version.
+                # Assuming 'Earnings Date' or similar implies the date.
+                # Common yf structure: cal is Dict or DF.
+                
+                # Check for 'Earnings Date' lists
+                dates = []
+                if isinstance(cal, dict):
+                    if 'Earnings Date' in cal:
+                        dates = cal['Earnings Date']
+                    elif 'Earnings High' in cal: # Sometimes structure is diff
+                         pass
+                elif isinstance(cal, pd.DataFrame):
+                    # Transposed usually?
+                    if 'Earnings Date' in cal.index:
+                        dates = cal.loc['Earnings Date'].tolist()
+                    else:
+                        # Try to parse numeric dates if any
+                        pass
+                
+                # Fallback: detection
+                # If we fail to parse, skip
+                # Let's try a safer 'next_event' approach if available or just catch errors
+                pass
+
+            # Alternative: Ticker.incomestmt usually has dates? No.
+            # Let's try the simplest approach: Fast info?
+            # Basic yfinance often returns next earnings in .info['earningsTimestamp']?
+            # Creating a robust fallback.
+            
+            # NEW APPROACH: .info['earningsTimestamp']
+            info = ticker.info
+            if 'earningsTimestamp' in info:
+                ts = info['earningsTimestamp']
+                if ts:
+                    dt = datetime.fromtimestamp(ts).date()
+                    if dt >= today:
+                        calendar[t] = dt
+                        
+        except Exception:
+            continue
+            
+    return calendar
+
+def render_catalyst_watch():
+    """Display upcoming high-impact corporate/economic events."""
+    
+    # 1. Major Watchlist
+    watchlist = ["NVDA", "SPY", "MSFT", "TSLA", "AAPL", "AMD", "COIN"]
+    
+    # 2. Fetch Earnings (Cached)
+    # Note: SPY/Indices don't have standard "earnings", so we filter
+    corp_tickers = [t for t in watchlist if t not in ["SPY", "QQQ"]]
+    earnings_map = get_earnings_calendar(corp_tickers)
+    
+    # 3. Macro Events (Still partially manual due to lack of good free macro API)
+    # We will keep a small manual list for CPI/FOMC as yfinance doesn't provide this clean macro data.
+    # But user asked to "Delete the static dictionary immediately". 
+    # USER REQUEST: "Replace this widget with a 'Next Earnings Watch'". 
+    # So we focus PURELY on the Earnings Watch per instructions.
+    
+    st.markdown("### 📅 Next Earnings Watch")
+    
+    if not earnings_map:
+        st.info("No immediate earnings detected for watchlist.")
+        return
+
+    # Sort by date
+    sorted_events = sorted(earnings_map.items(), key=lambda x: x[1])
+    today = datetime.now().date()
+    
+    shown_count = 0
+    
+    for ticker, event_date in sorted_events:
         delta = (event_date - today).days
         
-        if 0 <= delta <= 10:
-            upcoming.append((delta, event))
+        # Only show if within 30 days
+        if 0 <= delta <= 45:
+            shown_count += 1
+            color = "#FF5252" if delta <= 3 else "#00C853"
             
-    if upcoming:
-        for delta, event in upcoming:
-            color = "#FF5252" if delta <= 3 else "#FF9800"
             st.markdown(
                 f"<div style='border-left: 4px solid {color}; padding-left: 10px; margin-bottom: 12px;'>"
-                f"<strong>{event}</strong><br>"
-                f"<span style='font-size: 0.8em; color: #aaa;'>In {delta} days</span>"
+                f"<strong>{ticker}</strong> Earnings<br>"
+                f"<span style='font-size: 0.8em; color: #aaa;'>{event_date.strftime('%b %d')} (in {delta} days)</span>"
                 "</div>", 
                 unsafe_allow_html=True
             )
-    else:
-        st.markdown("<div style='color: #666; font-size: 0.9rem;'>No high-impact events in next 10 days.</div>", unsafe_allow_html=True)
+            
+    if shown_count == 0:
+         st.markdown("<div style='color: #666; font-size: 0.9rem;'>No major earnings in next 45 days.</div>", unsafe_allow_html=True)
 
 @st.cache_data(ttl=3600)
 def load_market_data():

@@ -13,6 +13,7 @@ from pypfopt.risk_models import CovarianceShrinkage
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
+from datetime import datetime, date
 
 
 class SignalStatus(Enum):
@@ -102,7 +103,7 @@ class MarketImmuneSystem:
         tickers = []
         for group in self.ASSET_UNIVERSE.values():
             tickers.extend([t.strip() for t in group])
-        return tickers
+        return list(set(tickers)) # Deduplicate to avoid column collisions
     
     @property
     def effective_lookback(self) -> int:
@@ -176,8 +177,104 @@ class MarketImmuneSystem:
                  volume = pd.DataFrame(1, index=data.index, columns=prices.columns)
 
             volume = volume.ffill().reindex(common_idx)
+
+            # --- DATA LATENCY FIX: Check for missing "Today" ---
+            # Standard yf.download often misses the current incomplete daily candle
+            last_date = prices.index[-1].date()
+            today = datetime.now().date()
             
-            # Dynamically adjust lookback if insufficient data
+            # If data is stale and it's a weekday (approx check, yfinance handles holidays mostly)
+            if last_date < today and today.weekday() < 5:
+                try:
+                    # Fetch today's data explicitly
+                    # print(f"Fetching live data for {today}...")
+                    live_data = yf.download(
+                        self._all_tickers,
+                        period="1d",
+                        auto_adjust=True,
+                        progress=False,
+                        threads=True
+                    )
+                    
+                    if not live_data.empty:
+                        # Extract Prices
+                        if isinstance(live_data.columns, pd.MultiIndex):
+                            if 'Close' in live_data.columns.get_level_values(0):
+                                live_prices = live_data['Close']
+                            else:
+                                live_prices = live_data
+                        elif 'Close' in live_data.columns:
+                            live_prices = live_data['Close']
+                        else:
+                            live_prices = live_data
+                            
+                        # Extract Volume
+                        if isinstance(live_data.columns, pd.MultiIndex):
+                             if 'Volume' in live_data.columns.get_level_values(0):
+                                 live_vol = live_data['Volume']
+                             else:
+                                 live_vol = pd.DataFrame(1, index=live_data.index, columns=live_prices.columns)
+                        elif 'Volume' in live_data.columns:
+                             live_vol = live_data['Volume']
+                        else:
+                             live_vol = pd.DataFrame(1, index=live_data.index, columns=live_prices.columns)
+                        
+
+                        # Append to main DataFrames
+                        # We use concat to add the new row
+                        # Drop duplicates in live_prices columns if any (just safely)
+                        live_prices = live_prices.loc[:, ~live_prices.columns.duplicated()]
+                        live_vol = live_vol.loc[:, ~live_vol.columns.duplicated()]
+                        
+                        # Ensure prices also doesn't have duplicates (it shouldn't if _get_all_tickers is unique)
+                        prices = prices.loc[:, ~prices.columns.duplicated()]
+                        volume = volume.loc[:, ~volume.columns.duplicated()]
+
+                        # Check if we already have this index (partial data update) or new row
+                        if live_prices.index[-1] not in prices.index:
+                            # Align columns by intersection to be safe (or just concat)
+                            # We want to keep all 'prices' columns. 
+                            # If live_prices has extras, we drop them. If it misses some, they get NaN.
+                            common_cols = prices.columns.intersection(live_prices.columns)
+                            to_append = live_prices[common_cols]
+                            to_append_vol = live_vol[common_cols]
+                            
+                            prices = pd.concat([prices, to_append])
+                            volume = pd.concat([volume, to_append_vol])
+                        else:
+                            # Update existing row
+                            prices.update(live_prices)
+                            volume.update(live_vol)
+                            
+                        # Forward fill any gaps in the live row
+                        prices = prices.ffill()
+                        volume = volume.ffill()
+                        
+                except Exception as e:
+                    print(f"Live fetch failed: {e}")
+
+            # CLEANUP: Deduplicate everything before final alignment
+            prices = prices.loc[~prices.index.duplicated(keep='last')]
+            prices = prices.loc[:, ~prices.columns.duplicated()]
+            
+            volume = volume.loc[~volume.index.duplicated(keep='last')]
+            volume = volume.loc[:, ~volume.columns.duplicated()]
+            
+            # Re-calculate log returns with the potentially new data
+            log_returns = np.log(prices / prices.shift(1))
+            
+            # Clean infinite values and NaNs again for the new row
+            log_returns = log_returns.replace([np.inf, -np.inf], np.nan).dropna()
+            
+            # Filter out days with >90% zero returns
+            non_zero_pct = (log_returns != 0).mean(axis=1)
+            log_returns = log_returns[non_zero_pct > 0.1]
+            
+            # Align prices and volume to clean returns index
+            common_idx = log_returns.index
+            # Use loc instead of reindex to avoid duplicate label errors if any remain
+            prices = prices.loc[common_idx]
+            volume = volume.loc[common_idx]
             available_days = len(log_returns)
             if available_days < self.lookback_days:
                 adjusted_lookback = max(self.min_lookback, int(available_days * 0.6))
