@@ -16,6 +16,14 @@ from scipy import stats
 
 from market_immune_system import MarketImmuneSystem, SignalStatus, MarketContext
 import textwrap
+import yfinance as yf
+
+# Import MacroConnector for FRED, calendars, sentiment
+try:
+    from macro_connector import get_macro_connector
+    MACRO_AVAILABLE = True
+except ImportError:
+    MACRO_AVAILABLE = False
 
 
 # Page configuration
@@ -480,6 +488,42 @@ def load_context_data():
     mis = MarketImmuneSystem()
     return mis.fetch_market_context_data()
 
+@st.cache_data(ttl=86400)  # 24 hours - FRED data is slow-moving
+def load_fred_data():
+    """Load FRED macro data (yield curve, credit spreads)."""
+    if not MACRO_AVAILABLE:
+        return None, None
+    try:
+        macro = get_macro_connector()
+        yield_curve = macro.get_real_yield_curve()
+        credit_stress = macro.get_credit_stress_index()
+        return yield_curve, credit_stress
+    except Exception as e:
+        print(f"FRED load error: {e}")
+        return (None, None), {}
+
+@st.cache_data(ttl=3600)  # 1 hour for sentiment
+def load_sentiment_data(ticker: str = "SPY"):
+    """Load sentiment analysis for a ticker."""
+    if not MACRO_AVAILABLE:
+        return {"score": 50, "label": "N/A", "headlines_analyzed": 0}
+    try:
+        macro = get_macro_connector()
+        return macro.get_sentiment_score(ticker)
+    except Exception as e:
+        print(f"Sentiment load error: {e}")
+        return {"score": 50, "label": "N/A", "headlines_analyzed": 0}
+
+def get_market_status():
+    """Get current market open/closed status."""
+    if not MACRO_AVAILABLE:
+        return {"is_open": False, "message": "Calendar unavailable"}
+    try:
+        macro = get_macro_connector()
+        return macro.get_market_calendar_status()
+    except:
+        return {"is_open": False, "message": "Calendar error"}
+
 def main():
     """Main Streamlit application."""
     
@@ -506,6 +550,18 @@ def main():
     # Sidebar
     with st.sidebar:
         st.markdown("### ⚙️ Controls")
+        
+        # Market Status Badge
+        market_status = get_market_status()
+        status_color = "#00C853" if market_status.get("is_open") else "#FF9800"
+        status_text = "🟢 OPEN" if market_status.get("is_open") else "🔴 CLOSED"
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #1E1E2E, #252535); padding: 10px 15px; border-radius: 8px; margin-bottom: 10px; border: 1px solid {status_color};">
+            <span style="font-size: 0.8em; color: #888;">NYSE STATUS</span><br>
+            <span style="font-size: 1.1em; font-weight: 600; color: {status_color};">{status_text}</span>
+            <span style="font-size: 0.75em; color: #666; margin-left: 8px;">{market_status.get('message', '')}</span>
+        </div>
+        """, unsafe_allow_html=True)
         
         # Refresh button
         if st.button("🔄 Refresh Data", use_container_width=True):
@@ -805,43 +861,112 @@ def main():
             - **Recession:** Cash, Gold (GLD), Utilities (XLU).
             """)
 
-    # Macro Context: Yield Curve & Dollar
-    st.markdown("### 🏦 Macro Context (Yields & Dollar)")
-    m1, m2 = st.columns(2)
+    # Macro Context: FRED Official Data + Dollar
+    st.markdown("### 🏦 Official Macro Data (Fed Sources)")
+    
+    # Load FRED data
+    fred_yield, fred_credit = load_fred_data()
+    sentiment_data = load_sentiment_data("SPY")
+    
+    m1, m2, m3 = st.columns(3)
     
     with m1:
-        # Yield Curve (10Y - 2Y) or (10Y - 13W)
-        # ^TNX = 10 Year Yield (Index, so price is yield * 10) -> No wait, yahoo returns yield as price directly usually?
-        # Actually ^TNX is CBOE 10 Year, usually price 40.00 = 4.00% yield.
-        # Let's assume we have prices for them.
-        
-        curve_msg = "N/A"
-        curve_val = 0.0
-        
-        if "^TNX" in prices.columns:
-            ten_y = prices["^TNX"].iloc[-1] # e.g. 42.50 = 4.25%
+        # FRED Yield Curve (T10Y2Y)
+        if fred_yield and fred_yield[0] is not None:
+            curve_val, curve_date = fred_yield
             
-            # 2Y is often missing in yahoo free data (^IRX is 13 weeks)
-            # Let's use 13 Week (^IRX) as proxy for "Cash"
-            if "^IRX" in prices.columns:
-                thirteen_w = prices["^IRX"].iloc[-1]
-                curve_val = (ten_y - thirteen_w) / 10.0 # Convert to percentage points
-                
-                if curve_val < 0:
-                    curve_msg = "WARNING: INVERTED (Recession Indicator)"
-                    curve_col = "inverse"
-                else:
-                    curve_msg = "Normal (Positive Slope)"
-                    curve_col = "normal"
-                    
-                st.metric("Yield Curve (10Y - 3M)", f"{curve_val:+.2f}%", curve_msg, delta_color=curve_col)
+            if curve_val < 0:
+                curve_msg = "⚠️ INVERTED (Recession)"
+                curve_col = "inverse"
             else:
-                st.metric("10 Year Yield", f"{ten_y/10:.2f}%", "Signal Missing")
+                curve_msg = "Normal (Positive)"
+                curve_col = "normal"
+                
+            st.metric(
+                "Yield Curve (10Y-2Y)", 
+                f"{curve_val:+.2f}%", 
+                curve_msg, 
+                delta_color=curve_col,
+                help="**Source**: FRED Series T10Y2Y\n\nThe official 10-Year minus 2-Year Treasury spread. Negative values historically precede recessions by 6-18 months."
+            )
+            st.caption(f"📅 As of {curve_date}")
         else:
-             st.info("Yield Curve Data Unavailable")
+            # Fallback to proxy
+            if "^TNX" in prices.columns and "^IRX" in prices.columns:
+                ten_y = prices["^TNX"].iloc[-1]
+                thirteen_w = prices["^IRX"].iloc[-1]
+                curve_val = (ten_y - thirteen_w) / 10.0
+                curve_msg = "⚠️ INVERTED" if curve_val < 0 else "Normal"
+                st.metric("Yield Curve (Proxy)", f"{curve_val:+.2f}%", curve_msg)
+                st.caption("⚠️ Using Yahoo proxy")
+            else:
+                st.info("Yield Curve: FRED unavailable")
 
     with m2:
-        # Dollar (UUP)
+        # Credit Stress (BAMLH0A0HYM2)
+        if fred_credit and fred_credit.get("value") is not None:
+            spread_val = fred_credit["value"]
+            z_score = fred_credit["z_score"]
+            spread_date = fred_credit["date"]
+            signal = fred_credit["signal"]
+            
+            # Color based on Z-score
+            if z_score > 2.0:
+                delta_color = "inverse"
+            elif z_score > 1.0:
+                delta_color = "off"
+            else:
+                delta_color = "normal"
+                
+            st.metric(
+                "Credit Stress (HY Spread)", 
+                f"{spread_val:.2f}%",
+                f"Z: {z_score:+.1f}σ",
+                delta_color=delta_color,
+                help="**Source**: FRED Series BAMLH0A0HYM2\n\nICE BofA High Yield Spread. When this spikes (Z > 2.0), credit is freezing - an immediate crash warning."
+            )
+            if "CRITICAL" in signal:
+                st.error(signal)
+            elif "ELEVATED" in signal:
+                st.warning(signal)
+            st.caption(f"📅 As of {spread_date}")
+        else:
+            st.info("Credit Stress: FRED unavailable")
+    
+    with m3:
+        # Sentiment Score (VADER)
+        score = sentiment_data.get("score", 50)
+        label = sentiment_data.get("label", "N/A")
+        headlines = sentiment_data.get("headlines_analyzed", 0)
+        
+        # Color based on extremes
+        if score > 70:
+            sent_color = "#FF9800"  # Euphoria = Caution
+        elif score < 30:
+            sent_color = "#FF5252"  # Panic = Danger
+        else:
+            sent_color = "#00C853"  # Neutral = OK
+            
+        st.metric(
+            "News Sentiment (SPY)",
+            f"{score:.0f}/100",
+            label,
+            help="**Source**: FinViz headlines + VADER sentiment\n\nScale: 0=Extreme Fear, 50=Neutral, 100=Euphoria.\n\n**Top Signal**: Euphoria (>80) + High Turbulence = Potential Peak."
+        )
+        
+        # Check for euphoria divergence
+        if score > 80 and metrics.turbulence_score > 180:
+            st.error("🚨 EUPHORIA PEAK: High sentiment + stress = potential top")
+        elif score > 70 and metrics.turbulence_score > 250:
+            st.warning("⚠️ Sentiment diverging from structure")
+            
+        st.caption(f"📰 {headlines} headlines analyzed")
+
+    # Dollar Trend (Keep existing)
+    st.markdown("---")
+    d1, d2 = st.columns(2)
+    
+    with d1:
         if "UUP" in prices.columns:
             uup_series = prices["UUP"]
             current_uup = uup_series.iloc[-1]
@@ -851,6 +976,7 @@ def main():
             uup_impact = "Headwind for Crypto/Assets" if uup_trend == "RISING" else "Tailwind for Assets"
             
             st.metric("US Dollar Trend (UUP)", uup_trend, uup_impact, delta_color="off" if uup_trend=="RISING" else "normal")
+
 
 
     if macro_signals:

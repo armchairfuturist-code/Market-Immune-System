@@ -183,8 +183,16 @@ class MarketImmuneSystem:
             last_date = prices.index[-1].date()
             today = datetime.now().date()
             
-            # If data is stale and it's a weekday (approx check, yfinance handles holidays mostly)
-            if last_date < today and today.weekday() < 5:
+            # Use market calendar for accurate holiday detection
+            try:
+                from macro_connector import get_macro_connector
+                macro = get_macro_connector()
+                is_trading_day = macro.is_trading_day(today)
+            except:
+                is_trading_day = today.weekday() < 5  # Fallback
+            
+            # If data is stale and today is a trading day
+            if last_date < today and is_trading_day:
                 try:
                     # Fetch today's data explicitly
                     # print(f"Fetching live data for {today}...")
