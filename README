@@ -54,14 +54,3 @@ While the dashboard is easy to read, the engine underneath is incredibly powerfu
 1.  **Check the Status:** If it says **"NORMAL,"** your long-term plan is safe.
 2.  **Watch the Shading:** Green vertical bars on the chart indicate a **Divergence Trap**.
 3.  **Follow the Playbook:** Use the "What to Buy" section to rotate your capital into the winning sectors.
-
-***
-
-F) VALIDATION & EDGE CASES
-*   **Novice Check:** I replaced "Covariance Breakdown" with "Market Floor getting thin."
-*   **Actionability Check:** The README explicitly links the "Cycle" to "Specific Sectors."
-*   **Integrity Check:** The README acknowledges the lead time, preventing subscribers from complaining if a crash doesn't happen *the same hour* a signal fires.
-
-G) NEXT IMPROVEMENTS
-*   **Visual Assets:** For the actual GitHub page, you should include a screenshot of the **Tactical HUD** and the **Market Health Monitor** (with the green shading) to make the value proposition immediate.
-*   **Performance Tracking:** Add a "Past Signals" section to show how the system caught the Aug 2024 or May 2024 breaks.
