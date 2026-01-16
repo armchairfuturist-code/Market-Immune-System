@@ -1196,6 +1196,9 @@ class MarketImmuneSystem:
             if slope_gld > 0: gld_rising = True
 
         # 1. EM vs US (EEM / SPY)
+        # EDGE CASE NOTE: During global crashes, if EEM falls less than SPY, this ratio rises.
+        # This is technically correct relative strength, but confusing for novices.
+        # The HUD's "SYSTEMIC SELL-OFF" status serves as the protective filter here.
         if 'EEM' in cum_ret.columns and 'SPY' in cum_ret.columns:
             ratio = cum_ret['EEM'] / cum_ret['SPY']
             sig = check_trend(
@@ -1287,6 +1290,111 @@ class MarketImmuneSystem:
 
         return signals
 
+    def calculate_crypto_zscore(self, returns: pd.DataFrame) -> Tuple[float, List[str]]:
+        """
+        Calculate average Z-Score of Crypto assets for early stress detection.
+        Crypto often leads broader market volatility (trades 24/7, high beta).
+        
+        Signal: If Crypto Z-Score > 2.0 while Stocks are flat, it's a pre-cursor 
+        to broader volatility.
+        
+        Returns:
+            Tuple of (average_z_score, list_of_high_z_tickers)
+        """
+        crypto_tickers = self.ASSET_UNIVERSE.get("Crypto", [])
+        valid_tickers = [t for t in crypto_tickers if t in returns.columns]
+        
+        if len(valid_tickers) < 3:
+            return 0.0, []
+        
+        # Use last 60 days for baseline statistics
+        if len(returns) < 60:
+            return 0.0, []
+            
+        # Calculate Z-scores for each crypto asset's latest return
+        z_scores = {}
+        high_z_tickers = []
+        
+        for ticker in valid_tickers:
+            ticker_returns = returns[ticker].iloc[-60:]
+            
+            if ticker_returns.isna().sum() > 30:  # Skip if too many NaNs
+                continue
+                
+            mu = ticker_returns.mean()
+            sigma = ticker_returns.std()
+            
+            if sigma == 0 or pd.isna(sigma):
+                continue
+                
+            latest_return = returns[ticker].iloc[-1]
+            z = (latest_return - mu) / sigma
+            z_scores[ticker] = z
+            
+            if abs(z) > 2.0:
+                high_z_tickers.append(ticker)
+        
+        if not z_scores:
+            return 0.0, []
+            
+        # Return average absolute Z-score (we care about volatility, not direction)
+        avg_z = np.mean([abs(z) for z in z_scores.values()])
+        
+        return float(avg_z), high_z_tickers
+
+    def get_narrative_battle(self, returns: pd.DataFrame) -> Dict:
+        """
+        Compare 5-day performance of AI vs Crypto sectors.
+        Tells user where speculative liquidity is currently flowing.
+        
+        Returns:
+            Dict with 'ai_perf', 'crypto_perf', 'leader', 'delta', 'narrative'
+        """
+        result = {
+            "ai_perf": 0.0,
+            "crypto_perf": 0.0,
+            "leader": "Neutral",
+            "delta": 0.0,
+            "narrative": "Insufficient data"
+        }
+        
+        if len(returns) < 5:
+            return result
+            
+        # Get last 5 trading days
+        recent = returns.tail(5)
+        
+        # AI Leaders (top liquid AI/Tech names)
+        ai_tickers = ["NVDA", "AMD", "MSFT", "GOOGL", "META", "SMCI", "PLTR", "ARM"]
+        valid_ai = [t for t in ai_tickers if t in recent.columns]
+        
+        # Crypto Leaders
+        crypto_tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "LINK-USD"]
+        valid_crypto = [t for t in crypto_tickers if t in recent.columns]
+        
+        if len(valid_ai) < 2 or len(valid_crypto) < 2:
+            return result
+            
+        # Calculate cumulative returns (convert log returns to simple)
+        ai_returns = recent[valid_ai].sum().mean() * 100  # Average across tickers, then to %
+        crypto_returns = recent[valid_crypto].sum().mean() * 100
+        
+        result["ai_perf"] = float(ai_returns)
+        result["crypto_perf"] = float(crypto_returns)
+        result["delta"] = abs(ai_returns - crypto_returns)
+        
+        # Determine leader
+        if ai_returns > crypto_returns + 1.0:
+            result["leader"] = "AI"
+            result["narrative"] = "Institutional capital favoring AI infrastructure plays"
+        elif crypto_returns > ai_returns + 1.0:
+            result["leader"] = "Crypto"
+            result["narrative"] = "Risk appetite surging - retail/speculation dominating"
+        else:
+            result["leader"] = "Balanced"
+            result["narrative"] = "Speculative capital split between narratives"
+            
+        return result
 
     def calculate_sector_turbulence(self, returns: pd.DataFrame, sector_name: str = "AI & Growth") -> float:
         """Calculate turbulence score specifically for a sector subset."""

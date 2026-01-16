@@ -106,9 +106,17 @@ def load_context_data():
     mis = MarketImmuneSystem()
     return mis.fetch_market_context_data()
 
-def render_tactical_hud(metrics: any, context: MarketContext, cycle_data: dict, analysis_date: str):
+def render_tactical_hud(metrics: any, context: MarketContext, cycle_data: dict, analysis_date: str, crypto_zscore: float = 0.0, spy_flat: bool = False):
     """
     Renders the 'Head-Up Display' (HUD) - Action-Oriented Version.
+    
+    Args:
+        metrics: MarketMetrics object
+        context: MarketContext object
+        cycle_data: Dict from get_market_cycle_status
+        analysis_date: String date for display
+        crypto_zscore: Average Z-Score of crypto assets (for early stress detection)
+        spy_flat: True if SPY return is between -0.5% and +0.5%
     """
     # 1. Theme Logic
     theme_color = "#00C853" # Green
@@ -119,6 +127,14 @@ def render_tactical_hud(metrics: any, context: MarketContext, cycle_data: dict, 
     # 2. Novice-Friendly Narrative (The "What is happening?")
     regime_title = "NORMAL MARKET"
     regime_desc = "Conditions are safe. Standard investing applies."
+    
+    # Additional analysis lines for special conditions
+    additional_analysis = ""
+    
+    # CRYPTO-LED STRESS DETECTION
+    # If Crypto Z-Score > 2.0 while Stocks are flat, it's a pre-cursor to volatility
+    if crypto_zscore > 2.0 and spy_flat:
+        additional_analysis = "<br><span style='color: #FF9800;'>⚠️ Crypto-Led Stress detected (Pre-cursor to broad volatility)</span>"
     
     if metrics.absorption_ratio > 850:
         if context.spx_level > context.spx_50d_ma:
@@ -173,7 +189,7 @@ font-family: sans-serif;">
 <!-- COLUMN 1: PLAIN ENGLISH ANALYSIS -->
 <div>
 <strong style="color: #DDD; font-size: 0.95rem;">🔎 What is happening?</strong>
-<p style="color: #AAA; font-size: 0.9rem; margin-top: 5px; line-height: 1.4;">{regime_desc}</p>
+<p style="color: #AAA; font-size: 0.9rem; margin-top: 5px; line-height: 1.4;">{regime_desc}{additional_analysis}</p>
 <div style="font-size: 0.8rem; color: #666; margin-top: 8px;">
 Risk Score: <span style="color: #DDD;">{metrics.turbulence_score:.0f}</span>/1000
 </div>
@@ -500,7 +516,7 @@ def load_fred_data():
         return yield_curve, credit_stress
     except Exception as e:
         print(f"FRED load error: {e}")
-        return (None, None), {}
+        return None, {}
 
 @st.cache_data(ttl=3600)  # 1 hour for sentiment
 def load_sentiment_data(ticker: str = "SPY"):
@@ -706,9 +722,15 @@ def main():
     # Calculate Cycle Data EARLY for the HUD
     cycle_data = mis.get_market_cycle_status(returns.loc[:target_ts])
     
-    # Render The New Tactical HUD
+    # Calculate Crypto Z-Score for early stress detection
+    crypto_zscore, crypto_high_z_tickers = mis.calculate_crypto_zscore(returns.loc[:target_ts])
+    
+    # Check if SPY is "flat" (between -0.5% and +0.5%)
+    spy_flat = abs(metrics.spy_return) < 0.5
+    
+    # Render The New Tactical HUD with Crypto-Led Stress detection
     analysis_date_str = target_ts.strftime('%Y-%m-%d')
-    render_tactical_hud(metrics, market_context, cycle_data, analysis_date_str)
+    render_tactical_hud(metrics, market_context, cycle_data, analysis_date_str, crypto_zscore, spy_flat)
 
     # Turbulence Attribution (Why is it high?)
     drivers = mis.get_turbulence_drivers(returns.loc[:target_ts])
@@ -861,6 +883,58 @@ def main():
             - **Recession:** Cash, Gold (GLD), Utilities (XLU).
             """)
 
+    # Battle of the Narratives Widget
+    st.markdown("### ⚔️ Battle of the Narratives")
+    st.caption("Where is speculative liquidity flowing? (5-Day Performance)")
+    
+    narrative_battle = mis.get_narrative_battle(returns.loc[:target_ts])
+    
+    if narrative_battle and narrative_battle.get("narrative") != "Insufficient data":
+        n1, n2, n3 = st.columns([1, 1, 1])
+        
+        with n1:
+            ai_color = "#00C853" if narrative_battle["ai_perf"] > 0 else "#FF5252"
+            st.markdown(f"""
+            <div style="background: #1E1E2E; border-radius: 8px; padding: 15px; text-align: center; border: 1px solid #333;">
+                <div style="font-size: 0.8rem; color: #888; text-transform: uppercase;">AI Sector</div>
+                <div style="font-size: 1.8rem; font-weight: 700; color: {ai_color};">{narrative_battle["ai_perf"]:+.2f}%</div>
+                <div style="font-size: 0.75rem; color: #666;">NVDA, AMD, SMCI, PLTR</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with n2:
+            # Leader Badge
+            leader = narrative_battle["leader"]
+            if leader == "AI":
+                badge_color = "#2196F3"
+                badge_icon = "🤖"
+            elif leader == "Crypto":
+                badge_color = "#FF9800"
+                badge_icon = "₿"
+            else:
+                badge_color = "#666"
+                badge_icon = "⚖️"
+                
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #1E1E2E, #252535); border-radius: 8px; padding: 15px; text-align: center; border: 2px solid {badge_color};">
+                <div style="font-size: 2rem;">{badge_icon}</div>
+                <div style="font-size: 1rem; font-weight: 700; color: {badge_color};">{leader} Leading</div>
+                <div style="font-size: 0.75rem; color: #888; margin-top: 5px;">{narrative_battle["narrative"]}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with n3:
+            crypto_color = "#00C853" if narrative_battle["crypto_perf"] > 0 else "#FF5252"
+            st.markdown(f"""
+            <div style="background: #1E1E2E; border-radius: 8px; padding: 15px; text-align: center; border: 1px solid #333;">
+                <div style="font-size: 0.8rem; color: #888; text-transform: uppercase;">Crypto Sector</div>
+                <div style="font-size: 1.8rem; font-weight: 700; color: {crypto_color};">{narrative_battle["crypto_perf"]:+.2f}%</div>
+                <div style="font-size: 0.75rem; color: #666;">BTC, ETH, SOL, AVAX</div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("Narrative battle data unavailable. Check if crypto tickers are loading.")
+
     # Macro Context: FRED Official Data + Dollar
     st.markdown("### 🏦 Official Macro Data (Fed Sources)")
     
@@ -871,11 +945,18 @@ def main():
     m1, m2, m3 = st.columns(3)
     
     with m1:
-        # FRED Yield Curve (T10Y2Y)
-        if fred_yield and fred_yield[0] is not None:
-            curve_val, curve_date = fred_yield
+        # FRED Yield Curve (T10Y2Y) - Now returns a dict with de-inversion detection
+        if fred_yield and fred_yield.get("value") is not None:
+            curve_val = fred_yield["value"]
+            curve_date = fred_yield["date"]
+            is_deinverting = fred_yield.get("is_deinverting", False)
+            is_inverted = fred_yield.get("is_inverted", False)
             
-            if curve_val < 0:
+            # Determine display based on de-inversion (most critical) or inversion
+            if is_deinverting:
+                curve_msg = "🚨 DE-INVERTING"
+                curve_col = "inverse"
+            elif is_inverted:
                 curve_msg = "⚠️ INVERTED (Recession)"
                 curve_col = "inverse"
             else:
@@ -887,8 +968,16 @@ def main():
                 f"{curve_val:+.2f}%", 
                 curve_msg, 
                 delta_color=curve_col,
-                help="**Source**: FRED Series T10Y2Y\n\nThe official 10-Year minus 2-Year Treasury spread. Negative values historically precede recessions by 6-18 months."
+                help="**Source**: FRED Series T10Y2Y\n\nThe official 10-Year minus 2-Year Treasury spread.\n\n"
+                     "**⚠️ DE-INVERSION WARNING**: Paradoxically, the crash usually happens when the curve "
+                     "UN-INVERTS (goes from negative to positive), not when it first tips negative. "
+                     "This is because de-inversion signals the Fed is cutting rates in response to recession arriving."
             )
+            
+            # Show de-inversion alert prominently
+            if is_deinverting:
+                st.error("🚨 **De-Inversion Alert**: Curve un-inverting. Historical crash precursor (6-12 month warning).")
+            
             st.caption(f"📅 As of {curve_date}")
         else:
             # Fallback to proxy
@@ -1078,13 +1167,46 @@ def main():
     
     # Chart 1: Market Health Monitor
     st.markdown("**1. Market Health Monitor**")
-    st.caption(
-        "**Left Axis (Red Area):** Turbulence. **Right Axis (Blue Lines):** S&P 500 Price & 50-MA.\n"
-        "**Blue Shading:** Divergence Zones (High Turbulence + Rising Market)."
-    )
+    
+    # Toggle for secondary axis (S&P 500 vs Bitcoin)
+    chart_col1, chart_col2 = st.columns([1, 4])
+    with chart_col1:
+        chart_asset = st.radio("Secondary Axis:", ["S&P 500", "Bitcoin"], horizontal=False, label_visibility="collapsed")
+    
+    with chart_col2:
+        if chart_asset == "Bitcoin":
+            st.caption(
+                "**Left Axis (Red Area):** Turbulence. **Right Axis (Orange Line):** Bitcoin Price.\n"
+                "**Green Shading:** Divergence Zones (High Turbulence + Rising Market)."
+            )
+        else:
+            st.caption(
+                "**Left Axis (Red Area):** Turbulence. **Right Axis (Blue Lines):** S&P 500 Price & 50-MA.\n"
+                "**Green Shading:** Divergence Zones (High Turbulence + Rising Market)."
+            )
+    
+    # Determine which price series to use
+    if chart_asset == "Bitcoin" and "BTC-USD" in prices.columns:
+        secondary_price = prices["BTC-USD"].reindex(turb_filtered.index).ffill()
+        secondary_ma = secondary_price.rolling(window=50).mean()
+        secondary_label = "Bitcoin (BTC)"
+        secondary_color = "#FF9800"  # Orange for BTC
+    else:
+        secondary_price = spx_filtered
+        secondary_ma = spx_ma_filtered
+        secondary_label = "S&P 500 Level"
+        secondary_color = "#1565C0"  # Blue for SPX
+    
     health_chart = create_health_monitor_chart(
-        turb_filtered.index, turb_filtered, spx_filtered, spx_ma_filtered
+        turb_filtered.index, turb_filtered, secondary_price, secondary_ma
     )
+    
+    # Update chart labels if using Bitcoin
+    if chart_asset == "Bitcoin" and "BTC-USD" in prices.columns:
+        health_chart.update_traces(line=dict(color=secondary_color), selector=dict(name="S&P 500 Level"))
+        health_chart.update_traces(name="Bitcoin (BTC)", selector=dict(name="S&P 500 Level"))
+        health_chart.update_yaxes(title_text="Bitcoin Price (USD)", secondary_y=True)
+    
     st.plotly_chart(health_chart, use_container_width=True)
     
     # Chart 2: Liquidity Stress

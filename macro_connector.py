@@ -3,6 +3,7 @@ MacroConnector - External Data Source Integrations
 Connects to FRED, market calendars, and sentiment APIs.
 """
 
+import os
 import pandas as pd
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Tuple
@@ -18,6 +19,10 @@ class MacroConnector:
     - FRED (Federal Reserve Economic Data): Yield curve, credit spreads
     - pandas_market_calendars: NYSE market status
     - finvizfinance + VADER: News sentiment
+    
+    SECURITY NOTE:
+    The FRED API key should be set via environment variable FRED_API_KEY
+    or Streamlit secrets, NOT hardcoded in this file.
     """
     
     # FRED Series IDs
@@ -30,8 +35,28 @@ class MacroConnector:
         
         Args:
             fred_api_key: API key for FRED (get free at https://fred.stlouisfed.org/docs/api/api_key.html)
+                         If not provided, checks:
+                         1. Environment variable FRED_API_KEY
+                         2. Streamlit secrets (st.secrets["FRED_API_KEY"])
+                         3. Falls back to None (FRED features disabled)
         """
-        self.fred_key = fred_api_key or "fc2e25e796936565703717197b34efa8"
+        # Priority: argument > env var > streamlit secrets
+        self.fred_key = fred_api_key
+        
+        if self.fred_key is None:
+            self.fred_key = os.environ.get("FRED_API_KEY")
+        
+        if self.fred_key is None:
+            try:
+                import streamlit as st
+                self.fred_key = st.secrets.get("FRED_API_KEY", None)
+            except:
+                pass
+        
+        if self.fred_key is None:
+            print("⚠️ FRED API key not configured. Set FRED_API_KEY environment variable.")
+            print("   Get a free key at: https://fred.stlouisfed.org/docs/api/api_key.html")
+        
         self._fred = None
         self._calendar = None
         
@@ -64,28 +89,69 @@ class MacroConnector:
     # FRED DATA METHODS
     # =========================================================================
     
-    def get_real_yield_curve(self) -> Tuple[Optional[float], Optional[date]]:
+    def get_real_yield_curve(self) -> Dict:
         """
         Fetch the OFFICIAL 10Y-2Y Treasury spread (Series: T10Y2Y).
         
+        Includes De-Inversion Detection:
+        Paradoxically, the crash usually happens when the curve UN-INVERTS 
+        (goes from negative to positive), not when it first tips negative.
+        
         Returns:
-            Tuple of (spread_value, observation_date) or (None, None) on failure
+            Dict with 'value', 'date', 'is_inverted', 'is_deinverting', 'signal'
         """
+        result = {
+            "value": None,
+            "date": None,
+            "is_inverted": False,
+            "is_deinverting": False,
+            "signal": "N/A"
+        }
+        
         fred = self._get_fred()
         if fred is None:
-            return None, None
+            return result
             
         try:
             series = fred.get_series(self.FRED_YIELD_CURVE)
-            if series is not None and len(series) > 0:
+            if series is not None and len(series) > 30:
+                series = series.dropna()
+                
                 # Get the last valid observation
-                last_valid = series.dropna().iloc[-1]
-                obs_date = series.dropna().index[-1].date()
-                return float(last_valid), obs_date
+                current_value = float(series.iloc[-1])
+                obs_date = series.index[-1].date()
+                
+                result["value"] = current_value
+                result["date"] = obs_date
+                
+                # Check inversion status
+                result["is_inverted"] = current_value < 0
+                
+                # DE-INVERSION DETECTION
+                # Check if curve was inverted 30 days ago but is now positive
+                thirty_days_ago = obs_date - timedelta(days=30)
+                history = series[series.index >= pd.Timestamp(thirty_days_ago)]
+                
+                if len(history) > 10:
+                    # Was the minimum in the recent history negative?
+                    min_recent = history.min()
+                    
+                    # De-inverting: Was negative recently, now positive (or close to it)
+                    if min_recent < -0.05 and current_value > -0.05:
+                        result["is_deinverting"] = True
+                
+                # Determine signal
+                if result["is_deinverting"]:
+                    result["signal"] = "🚨 DE-INVERSION: Curve un-inverting (Historical crash precursor)"
+                elif result["is_inverted"]:
+                    result["signal"] = "⚠️ INVERTED: Recession signal active"
+                else:
+                    result["signal"] = "Normal (Positive Slope)"
+                    
         except Exception as e:
             print(f"FRED Yield Curve Error: {e}")
             
-        return None, None
+        return result
     
     def get_credit_stress_index(self) -> Dict:
         """
@@ -339,9 +405,25 @@ class MacroConnector:
                 }
                 
         except ImportError as e:
+            # Missing dependencies
             print(f"Sentiment dependencies missing: {e}")
+            result["label"] = "Dependencies Missing"
+        except AttributeError as e:
+            # finvizfinance HTML structure changed (common issue with scrapers)
+            print(f"finvizfinance scraping error (HTML structure may have changed): {e}")
+            result["label"] = "Scraping Error"
+        except KeyError as e:
+            # Expected column missing from scraped data
+            print(f"finvizfinance data format changed: {e}")
+            result["label"] = "Data Format Error"
+        except ConnectionError as e:
+            # Network issues
+            print(f"Network error fetching sentiment: {e}")
+            result["label"] = "Network Error"
         except Exception as e:
+            # Generic fallback - don't crash the dashboard
             print(f"Sentiment Error for {ticker}: {e}")
+            result["label"] = "Error"
             
         return result
     
