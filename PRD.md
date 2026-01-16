@@ -1,119 +1,115 @@
-**Objective:** Build a single-page interactive Risk Dashboard ("The Market Immune System") to detect market fragility, structural breaks, and high-probability "buy low" setups.
-**Tech Stack:** Python 3.10+, Streamlit (UI), Plotly (Charts), YFinance (Data), PyPortfolioOpt (Covariance), Scikit-Learn (PCA), Scipy (Stats).
+Here is the **Master Product Requirement Document (PRD)** designed specifically for use with AI-based IDEs (like Cursor, Windsurf, or GitHub Copilot/Workspace).
 
-## 1. System Architecture
-The system functions as a daily monitor that ingests price data, smooths it, calculates covariance structures, and alerts on structural breakdowns (Turbulence) or correlation spikes (absorption), cross-referenced with liquidity health.
+**How to use this:**
+Copy the text below entirely and paste it into your AI IDE's chat or context window. It uses specific terminology (e.g., "Step-by-Step Implementation Strategy," "File Structure") that forces the AI to code systematically rather than hallucinating random scripts.
 
-### 1.1 Inputs (The Asset Universe)
-Define a constant `ASSET_UNIVERSE`. It must include exactly these liquid tickers across 4 distinct groups:
-1.  **Broad Markets (40%):** SPY, QQQ, DIA, IWM, VXX, EEM, EFA, TLT, IEF, SHY, LQD, HYG, BND, AGG, GLD, SLV, CPER, USO, UNG, DBC, PALL, UUP, FXE, FXY, FXB, CYB, XLF, XLE, XLK, XLY, XLI, XLB, XLRE.
-2.  **Crypto (10%):** BTC-USD, ETH-USD, SOL-USD, BNB-USD, XRP-USD, ADA-USD, AVAX-USD, DOGE-USD, DOT-USD, LINK-USD.
-3.  **AI & Growth (30%):** NVDA, AMD, TSM, AVGO, ARM, MU, INTC, TXN, LRCX, AMAT, VRT, ANET, SMCI, PLTR, DELL, HPE, CSCO, IBM, ORCL, CEG, VST, NRG, CCJ, URA, NEE, SO, DUK, TSLA, PATH, ISRG, BOTZ, ROBO, ARKK.
-4.  **Defensive (20%):** XLV, JNJ, PFE, MRK, ABBV, UNH, LLY, AMGN, XLP, PG, KO, PEP, COST, WMT, PM, XLU, O, AMT, CCI, PSA, DLR, USMV, SPLV.
+***
 
-### 1.2 Data Ingestion Layer
-*   **Library:** `yfinance`.
-*   **Range:** Fetch last `750` days.
-*   **Specifics:** Retrieve `Close` prices for all assets **AND** `Volume` specifically for `SPY` (used as the system-wide liquidity proxy).
-*   **Cleaning:**
-    *   Forward Fill (`ffill`) missing data (crucial for aligning Crypto trading 24/7 with Stocks M-F).
-    *   Drop columns with >10% missing data.
-    *   Calculate **Log Returns** for all math operations.
-*   **Caching:** Decorate the fetch function with `@st.cache_data(ttl=3600)` to prevent re-downloading on every UI interaction.
+# PROJECT: Market Immune System v2.0 (Master PRD)
 
-## 2. Mathematical Core (The Evaluation Engine)
+## 1. Executive Summary
+**Goal:** Build a Python-based financial dashboard ("The Market Immune System") that acts as an early warning detector for market turbulence.
+**Core Philosophy:** Detect structural breaks in correlation and volatility to signal "Buy Low / Sell High" opportunities 7-10 days in advance.
+**Target Output:** A local Streamlit web application with a "MetaMint" dark-mode aesthetic.
 
-### Metric A: Statistical Turbulence (Mahalanobis Distance)
-*   **Concept:** Measures how "alien" today's return vector is compared to the historical covariance structure.
-*   **Lookback:** Rolling 365-day window for covariance `S`.
-*   **Covariance Hardening:** Use **Ledoit-Wolf Shrinkage** (via `pypfopt.risk_models.CovarianceShrinkage`). Do NOT use standard `numpy.cov` to avoid singular matrices.
-*   **Formula:** $D_t = \sqrt{ (r_t - \mu) \Sigma^{-1} (r_t - \mu)' }$
-*   **Scale Normalization (0-1000 Calibrated):**
-    1.  Calculate the **99th Percentile ($P_{99}$)** of the trailing 365-day raw $D_t$ values.
-    2.  **Anchor Point:** We define the "Extreme/Critical" threshold as **370** (which is 37% of the 0-1000 scale).
-    3.  **Formula:** `Final_Score = (Raw_Dt / P99) * 370`.
-    4.  **Cap:** `Final_Score = min(Final_Score, 1000)`.
-    *   *Result:* A standard "bad day" (99th percentile) will hit exactly 370. A "Black Swan" (3x a bad day) will hit ~1000.
-*   **Smoothing:** Apply a 3-Day EMA to the final Score.
+## 2. Technical Stack & Constraints
+*   **Language:** Python 3.10+
+*   **Frontend:** `streamlit` (must use `st.set_page_config(layout="wide")`)
+*   **Data Source (Price):** `yfinance` (Free tier). **Crucial:** Must implement "Zero-Trust" fixes for data integrity.
+*   **Data Source (Macro):** `fredapi`. **API Key:** `fc2e25e796936565703717197b34efa8`
+*   **Math Backend:** `numpy`, `pandas`, `scipy` (optimize with `numba` if possible), `PyPortfolioOpt` (for Ledoit-Wolf shrinkage).
+*   **Visualization:** `plotly.graph_objects` (interactive financial charts).
+*   **Design:** Custom CSS for "MetaMint" Dark Mode (Black/Dark Grey backgrounds, Neon Green accents).
 
-### Metric B: Absorption Ratio (Systemic Fragility)
-*   **Concept:** Measures how much the market is moving in lockstep (unification).
-*   **Method:** Principal Component Analysis (PCA) via `sklearn.decomposition.PCA`.
-*   **Calculation:**
-    1.  Fit PCA on the correlation matrix of the last 365 days.
-    2.  Calculate Variance Explained by the top 20% of Eigenvectors.
-    3.  Scale result: `Absorption_Score = (Sum_Variance_Top_20_Percent) / (Total_Variance) * 1000`.
+## 3. Data Architecture (The "Zero-Trust" Engine)
 
-### Metric C: Fractal Efficiency (The Hurst Exponent)
-*   **Concept:** Measures the "memory" of the price series to detect crowded trades. If trends are "too smooth" ($H \to 1.0$), the market is fragile.
-*   **Input:** Log prices of `SPY` (last 300 days).
-*   **Calculation:**
-    1.  Implement a standard **Rescaled Range (R/S) Analysis** or a simplistic **Variance Ratio Test**.
-    2.  Estimate $H$ via the slope of `log(lag)` vs `log(volatility)` using `numpy.polyfit`.
-*   **Note:** Use vectorized operations where possible to prevent lag.
+### 3.1 Asset Universe (The "99")
+The system must initialize with this specific list across 4 pillars:
+1.  **Broad:** SPY, QQQ, IWM, VXX, TLT, GLD, UUP.
+2.  **Crypto:** BTC-USD, ETH-USD, SOL-USD.
+3.  **AI/Growth:** NVDA, AMD, TSM, SMCI, VRT, PLTR, CEG, VST, CCJ.
+4.  **Defensive:** XLV, XLP, XLU.
+*Action:* Auto-fill the remaining slots to reach ~99 assets with top liquid US stocks if needed.
 
-### Metric D: Liquidity Stress (Amihud Ratio Z-Score)
-*   **Concept:** Measures the price impact per dollar traded. If Price moves significantly on Low Volume, a "Liquidity Hole" is forming.
-*   **Input:** `SPY` DataFrame (Close Price and Volume).
-*   **Calculation:**
-    1.  Compute Daily Amihud: `Abs(Daily_Return) / (Price * Volume)`. *Handle 0 volume by replacing with NaN or previous.*
-    2.  Smooth: Apply a **10-day Moving Average**.
-    3.  Normalize: Calculate the **Z-Score** relative to the trailing 365-day mean/std dev.
+### 3.2 Resilience Fixes (Mandatory Implementation)
+The AI must implement these specific functions in `data_loader.py`:
+1.  **The "Monday" Fix:** When fetching data, split Crypto (24/7) and Stocks (M-F). Perform an **Outer Join** on the Datetime index and forward-fill (`ffill`) missing stock data on weekends/holidays to honor Bitcoin's volatility signal.
+2.  **The "Today" Fix:** Standard `yfinance` history often omits the live intraday candle.
+    *   *Logic:* Fetch `history(period="1y")`. Then fetch `history(period="1d", interval="1m")` (or "1h"). Resample the live data to 1 Day and `.loc` append it to the main dataframe.
+3.  **The "Time Travel" Fix:** In the UI, the date slider must strictly cap `max_value` at `usage_date.today()` to prevent look-ahead errors.
 
-## 3. Signal Logic (The Composite "Buy Low" Detector)
-Implement a function `generate_signal(spx_return, turbulence_score, absorption_score, hurst, liquidity_z)`:
+## 4. Mathematical Core (The Algorithms)
 
-**Composite Signal States (Based on 0-1000 Calibrated Scale):**
-1.  **CONDITION: FRAGILE (The Bubble)**
-    *   **Logic:** `Absorption > 800` **OR** (`Hurst > 0.75` AND `Liquidity_Z > 1.5`).
-    *   **Message:** "WARNING: Fragile Structure. Crowded Trade + Thin Liquidity."
-    *   **Action:** Cash preservation (Code: ORANGE).
-2.  **CONDITION: CRASH (The Event)**
-    *   **Logic:** `Turbulence > 370` (Extreme) **AND** `Liquidity_Z > 2.0`.
-    *   **Message:** "CRASH: Liquidity Evaporation Event."
-    *   **Action:** DO NOT CATCH THE KNIFE (Code: BLACK).
-3.  **CONDITION: DIVERGENCE (The Trap)**
-    *   **Logic:** `SPX_Price > 50-day SMA` (Uptrend) **AND** `Turbulence > 180` (Warning).
-    *   **Message:** "DIVERGENCE: Market rising on broken structure."
-    *   **Action:** CAUTION (Code: RED).
-4.  **CONDITION: OPPORTUNITY (The Buy Signal)**
-    *   **Logic:**
-        *   `Turbulence` *was* > 370 (recent panic).
-        *   `Turbulence` is now < 300 (calming).
-        *   `Liquidity_Z` < 1.0 (Market Makers have returned).
-        *   `Hurst` < 0.5 (Mean Reversion active).
-    *   **Message:** "BUY SIGNAL: Stress clearing, Liquidity returning."
-    *   **Action:** ENTER (Code: BLUE/GREEN).
+### 4.1 Statistical Turbulence (0-1000 Index)
+*   **Input:** Log-returns of the Asset Universe.
+*   **Calculation:** Mahalanobis Distance using a **Ledoit-Wolf Shrinkage** covariance matrix (reduces noise).
+*   **Normalization:**
+    *   Calculate raw Mahalanobis distance.
+    *   Rolling 365-day average helps, but final output must be scaled 0-1000.
+    *   **Anchor:** Historic 99th percentile = Score 370.
 
-## 4. UI Requirements (Streamlit)
-The layout must be modern and dark-mode friendly.
+### 4.2 Absorption Ratio (Systemic Fragility)
+*   **Method:** Principal Component Analysis (PCA) via `scikit-learn` or `statsmodels`.
+*   **Formula:** (Variance of Top 20% Eigenvectors) / (Total Variance).
+*   **Logic:** If Score > 800 (80%), assets are moving in lockstep (High Fragility/Crash risk).
 
-1.  **Sidebar:**
-    *   Date Range Slider.
-    *   "Refresh Data" button.
-    *   List of Top 5 contributing assets to today's Turbulence (calculated via Partial Mahalanobis contribution).
-2.  **Main Panel - Header:**
-    *   Four columns metric display:
-        1.  **Turbulence Score** (0-1000, Normalized)
-        2.  **Absorption Ratio** (0-1000)
-        3.  **Liquidity Z-Score** (Float)
-        4.  **Signal Status** (Colorful text based on Section 3).
-3.  **Main Panel - Charts:**
-    *   **Chart 1:** "Market Health Monitor" (Plotly). Dual-axis chart.
-        *   **Left Axis (Primary):** Turbulence Score (Area/Shadow). Range Fixed `[0, 1000]`.
-        *   **Right Axis (Secondary):** SPX Price (Line) and SPX 50-day SMA (Dashed Line).
-        *   **Threshold Line 1 (Yellow/Dashed):** Static horizontal line at **180**. Label: "Warning (18%)".
-        *   **Threshold Line 2 (Red/Dashed):** Static horizontal line at **370**. Label: "Critical (37%)".
-        *   **Overlay:** Green vertical shading when `Turbulence > 180` AND `SPX > 50-day SMA`.
-    *   **Chart 2:** "Liquidity Stress Gauge" (Plotly Line Chart).
-        *   X-Axis: Date.
-        *   Y-Axis: Amihud Z-Score.
-        *   Red Zone: Background shading > 2.0.
-    *   **Chart 3:** "Fragility Heatmap". Rolling Correlation matrix of the last 30 days.
+### 4.3 Regime Detection Logic
+Implement a classifier function `get_market_regime(turbulence, absorption, price_trend)`:
+*   **FRAGILE RALLY:** Price Up + Absorption > 850.
+*   **STRUCTURAL DIVERGENCE:** Price Up + Turbulence > 180 (The "Trap").
+*   **SYSTEMIC SELL-OFF:** Price Down + Absorption > 850.
+*   **CRASH ALERT:** Turbulence > 370.
+*   **NORMAL:** Turbulence < 180.
 
-## 5. Constraint Checklist for Implementation
-*   [ ] Handle the `Singular Matrix` error using Pseudo-Inverse (`pinv`) if Shrinkage fails.
-*   [ ] Ensure `ASSET_UNIVERSE` tickers are stripped of potential whitespace.
-*   [ ] **Crucial:** Include a `try/except` block for the `yfinance` download.
-*   [ ] **Crucial:** Handle `ZeroDivisionError` in Amihud calculation if Volume is 0.
-*   [ ] Code must be modular: `class MarketImmuneSystem` for logic, `main.py` for UI.
+## 5. UI/UX Specifications (The "Tactical HUD")
+
+### 5.1 Design System (MetaMint)
+*   **Background:** `#0E1117` (Deep Black/Blue).
+*   **Card Background:** `#262730` (Dark Grey).
+*   **Text:** `#FAFAFA`.
+*   **Accents:**
+    *   `#00FF80` (Neon Green - Safe/Buy).
+    *   `#FF4B4B` (Neon Red - Danger/Sell).
+    *   `#FFAA00` (Amber - Warning).
+
+### 5.2 Dashboard Layout
+1.  **Top Row (The HUD):** 4 Metric Cards.
+    *   *Market Status:* E.g., "RISK ON" (Green) or "CRASH ALERT" (Red).
+    *   *Turbulence Score:* Large Number (e.g., "450").
+    *   *Fragility (Absorption):* Percentage (e.g., "82%").
+    *   *Recession Signal:* (From FRED Yield Curve).
+2.  **Main Chart (Divergence Detector):**
+    *   Dual Axis Plotly Chart.
+    *   Line A: SPX Price (White).
+    *   Line B: Turbulence Score (Red area chart).
+    *   **Feature:** Add vertical Green Shading to the background whenever "Turbulence > 180 AND SPX > 50-day MA" (Visualizing the divergence).
+3.  **Bottom Row:**
+    *   *Col 1:* Sector Rotation List (Top 3 sectors to buy now).
+    *   *Col 2:* "Narrative Battle" (Crypto vs. AI relative strength chart).
+
+## 6. Suggested File Structure
+
+```text
+/market_immune_system
+│
+├── main.py                # usage: streamlit run main.py
+├── requirements.txt       # yfinance, streamlit, plotly, scikit-learn, pyportfolioopt, fredapi
+├── config.py              # Asset lists, API Keys, Constants (Thresholds)
+│
+├── /core
+│   ├── data_loader.py     # YFinance & FRED fetching + "Monday/Today" fixes
+│   ├── math_engine.py     # Mahalanobis, PCA, Hurst calculations
+│   └── text_analysis.py   # (Optional) Simple Finviz sentiment logic
+│
+└── /ui
+    ├── theme.css          # MetaMint CSS injection
+    └── charts.py          # Plotly visualization wrappers
+```
+
+## 7. Implementation Step-by-Step for AI
+1.  **Setup:** Initialize the file structure and `requirements.txt`.
+2.  **Data Engine:** Write `data_loader.py` first. Verify the "Monday Fix" works by fetching BTC and SPY and checking the weekend index.
+3.  **Math Engine:** Implement `math_engine.py`. Create the Turbulence function with Ledoit-Wolf shrinkage.
+4.  **UI Core:** Build `main.py` sidebar and basic layout.
+5.  **Integration:** Connect Data -> Math -> UI.
+6.  **Refinement:** Apply the "MetaMint.png" CSS in the project folder as a style guide and finalize the Regime Detection Logic logic.
