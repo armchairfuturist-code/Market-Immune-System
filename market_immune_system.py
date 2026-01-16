@@ -1344,57 +1344,52 @@ class MarketImmuneSystem:
 
     def get_narrative_battle(self, returns: pd.DataFrame) -> Dict:
         """
-        Compare 5-day performance of AI vs Crypto sectors.
-        Tells user where speculative liquidity is currently flowing.
-        
-        Returns:
-            Dict with 'ai_perf', 'crypto_perf', 'leader', 'delta', 'narrative'
+        Compare 5-day performance of AI vs Crypto.
         """
-        result = {
-            "ai_perf": 0.0,
-            "crypto_perf": 0.0,
-            "leader": "Neutral",
-            "delta": 0.0,
-            "narrative": "Insufficient data"
-        }
-        
-        if len(returns) < 5:
-            return result
+        if returns.empty:
+            return {"narrative": "Insufficient data"}
             
-        # Get last 5 trading days
         recent = returns.tail(5)
         
-        # AI Leaders (top liquid AI/Tech names)
-        ai_tickers = ["NVDA", "AMD", "MSFT", "GOOGL", "META", "SMCI", "PLTR", "ARM"]
-        valid_ai = [t for t in ai_tickers if t in recent.columns]
+        # Define Tickers
+        ai_tickers = ["NVDA", "AMD", "SMCI", "PLTR", "AVGO", "ARM"]
+        crypto_tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD"]
         
-        # Crypto Leaders
-        crypto_tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "LINK-USD"]
+        # Robust Check: Only use columns that exist
+        valid_ai = [t for t in ai_tickers if t in recent.columns]
         valid_crypto = [t for t in crypto_tickers if t in recent.columns]
         
-        if len(valid_ai) < 2 or len(valid_crypto) < 2:
-            return result
+        if not valid_ai or not valid_crypto:
+             return {"narrative": "Insufficient data"}
+             
+        # [ROBUST FIX]: Use .dropna() inside the mean calculation
+        # Sum of 5-day returns (approx)
+        ai_recent = recent[valid_ai].sum().mean() * 100
+        crypto_recent = recent[valid_crypto].sum().mean() * 100
+        
+        # Ensure we don't return NaN if one ticker is broken
+        if pd.isna(ai_recent) or pd.isna(crypto_recent):
+            return {"narrative": "Insufficient data"}
             
-        # Calculate cumulative returns (convert log returns to simple)
-        ai_returns = recent[valid_ai].sum().mean() * 100  # Average across tickers, then to %
-        crypto_returns = recent[valid_crypto].sum().mean() * 100
+        # Determine Narrative
+        diff = ai_recent - crypto_recent
         
-        result["ai_perf"] = float(ai_returns)
-        result["crypto_perf"] = float(crypto_returns)
-        result["delta"] = abs(ai_returns - crypto_returns)
-        
-        # Determine leader
-        if ai_returns > crypto_returns + 1.0:
-            result["leader"] = "AI"
-            result["narrative"] = "Institutional capital favoring AI infrastructure plays"
-        elif crypto_returns > ai_returns + 1.0:
-            result["leader"] = "Crypto"
-            result["narrative"] = "Risk appetite surging - retail/speculation dominating"
+        if diff > 2.0:
+            narrative = "Equity Rotation (AI > Crypto)"
+            leader = "AI"
+        elif diff < -2.0:
+            narrative = "Speculative Risk-On (Crypto > AI)"
+            leader = "Crypto"
         else:
-            result["leader"] = "Balanced"
-            result["narrative"] = "Speculative capital split between narratives"
+            narrative = "High Correlation (Both Moving)"
+            leader = "Neutral"
             
-        return result
+        return {
+            "ai_perf": ai_recent,
+            "crypto_perf": crypto_recent,
+            "narrative": narrative,
+            "leader": leader
+        }
 
     def calculate_sector_turbulence(self, returns: pd.DataFrame, sector_name: str = "AI & Growth") -> float:
         """Calculate turbulence score specifically for a sector subset."""
@@ -1418,3 +1413,4 @@ class MarketImmuneSystem:
         except Exception as e:
             print(f"Sector turbulence error: {e}")
             return 0.0
+

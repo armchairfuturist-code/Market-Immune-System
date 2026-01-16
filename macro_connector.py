@@ -214,8 +214,86 @@ class MacroConnector:
         return result
     
     # =========================================================================
-    # MARKET CALENDAR METHODS
+    # QUIVER QUANTITATIVE (SMART MONEY)
     # =========================================================================
+    
+    def get_smart_money_senate(self) -> list:
+        """
+        Fetch Senate trading data to find 'Insider' accumulation.
+        Returns top 5 net-bought tickers by member of Congress.
+        """
+        top_picks = []
+        try:
+            import quiverquant
+            
+            # Get Key
+            token = os.environ.get("QUIVER_API_KEY")
+            if not token:
+                try:
+                    import streamlit as st
+                    token = st.secrets.get("QUIVER_API_KEY")
+                except:
+                    pass
+            
+            if not token:
+                return [{"ticker": "No API Key", "desc": "Set QUIVER_API_KEY"}]
+                
+            qv = quiverquant.quiver(token)
+            
+            # Fetch last 30 days
+            # Note: quiver.senate_trading() returns a DataFrame of trades
+            df = qv.senate_trading()
+            
+            if df.empty:
+                return []
+                
+            # Filter for recent trades (last 60 days)
+            df['Date'] = pd.to_datetime(df['Date'])
+            cutoff = pd.Timestamp.now() - pd.Timedelta(days=60)
+            recent = df[df['Date'] > cutoff]
+            
+            if recent.empty:
+                return [{"ticker": "None", "desc": "No recent trades"}]
+            
+            # Parse 'Amount' ranges to estimate value
+            # Ranges are like "$1,001 - $15,000"
+            def parse_amount(amt_str):
+                try:
+                    clean = amt_str.replace("$", "").replace(",", "")
+                    if "-" in clean:
+                        low, high = clean.split("-")
+                        return (float(low) + float(high)) / 2
+                    else:
+                        return float(clean)
+                except:
+                    return 0.0
+            
+            recent['Value'] = recent['Amount'].apply(parse_amount)
+            
+            # Purchases positive, Sales negative
+            recent['NetValue'] = recent.apply(
+                lambda x: x['Value'] if "Purchase" in x['Transaction'] else -x['Value'], axis=1
+            )
+            
+            # Group by Ticker
+            net_flows = recent.groupby('Ticker')['NetValue'].sum().sort_values(ascending=False)
+            
+            # Top 5
+            top_5 = net_flows.head(5)
+            
+            for ticker, flow in top_5.items():
+                if flow > 0:
+                    top_picks.append({
+                        "ticker": ticker,
+                        "desc": f"Net Bought: ${flow/1000:.0f}k (Senate)"
+                    })
+                    
+        except Exception as e:
+            print(f"Quiver Error: {e}")
+            top_picks.append({"ticker": "Error", "desc": str(e)})
+            
+        return top_picks
+
     
     def get_market_calendar_status(self) -> Dict:
         """

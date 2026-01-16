@@ -132,7 +132,6 @@ def render_tactical_hud(metrics: any, context: MarketContext, cycle_data: dict, 
     additional_analysis = ""
     
     # CRYPTO-LED STRESS DETECTION
-    # If Crypto Z-Score > 2.0 while Stocks are flat, it's a pre-cursor to volatility
     if crypto_zscore > 2.0 and spy_flat:
         additional_analysis = "<br><span style='color: #FF9800;'>⚠️ Crypto-Led Stress detected (Pre-cursor to broad volatility)</span>"
     
@@ -150,6 +149,26 @@ def render_tactical_hud(metrics: any, context: MarketContext, cycle_data: dict, 
         regime_title = "CRASH ALERT"
         regime_desc = "Extreme volatility. Protect capital immediately."
         
+    # NEW LOGIC: The Synthesis Shortlist
+    shortlist = []
+    
+    # 1. The Risk Trigger
+    if metrics.turbulence_score > 370:
+        shortlist.append("🔴 **SELL:** High System Stress. Raise 20% Cash.")
+    elif metrics.absorption_ratio > 850:
+        shortlist.append("🟠 **CAUTION:** Market is 'Locked'. Tighten Stops.")
+    else:
+        shortlist.append("🟢 **HOLD:** System structure is stable.")
+
+    # 2. The Opportunity Trigger
+    if cycle_data:
+        # Split tickers string "Tech, Industrials" -> "Tech"
+        top_sector = cycle_data['actionable_tickers'].split(',')[0] if cycle_data.get('actionable_tickers') else "Index"
+        shortlist.append(f"🚀 **BUY:** {cycle_data['current_phase']} leaders ({top_sector})")
+        
+    # Format Shortlist for HTML
+    shortlist_html = "".join([f"<div style='margin-bottom: 6px;'>{item}</div>" for item in shortlist])
+
     # 3. Actionable Playbook (The "What do I buy?")
     buy_recommendation = "Diversified Index (SPY)"
     narrative_reason = "No clear trend."
@@ -162,7 +181,6 @@ def render_tactical_hud(metrics: any, context: MarketContext, cycle_data: dict, 
     # 4. Plain English Tactical Stance
     stop_loss = "Use Tight Stops (Protect Profits)" if metrics.signal in [SignalStatus.ORANGE, SignalStatus.RED] else "Standard Stops"
     leverage = "Reduce Leverage (High Risk)" if metrics.turbulence_score > 370 else "Leverage OK"
-    # Simplify "Hedge Tails" to something understandable
     hedging = "Consider Cash/Gold" if metrics.absorption_ratio > 850 else "Stay Invested"
     
     # --- RENDER THE HUD ---
@@ -186,10 +204,12 @@ font-family: sans-serif;">
 </div>
 </div>
 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;">
-<!-- COLUMN 1: PLAIN ENGLISH ANALYSIS -->
+<!-- COLUMN 1: STRATEGIC SHORTLIST -->
 <div>
-<strong style="color: #DDD; font-size: 0.95rem;">🔎 What is happening?</strong>
-<p style="color: #AAA; font-size: 0.9rem; margin-top: 5px; line-height: 1.4;">{regime_desc}{additional_analysis}</p>
+<strong style="color: #DDD; font-size: 0.95rem;">📋 Strategic Shortlist</strong>
+<div style="color: #AAA; font-size: 0.9rem; margin-top: 5px; line-height: 1.4; background: rgba(255,255,255,0.05); padding: 10px; border-radius: 4px;">
+{shortlist_html}
+</div>
 <div style="font-size: 0.8rem; color: #666; margin-top: 8px;">
 Risk Score: <span style="color: #DDD;">{metrics.turbulence_score:.0f}</span>/1000
 </div>
@@ -591,15 +611,14 @@ def main():
         
         # Determine available date range
         min_date = returns.index.min().to_pydatetime()
-        max_date = returns.index.max().to_pydatetime()
+        # Ensure max_date is the actual last day of data, not a future date
+        max_data_date = returns.index.max().to_pydatetime()
         
-        # 1. Chart Filter & Analysis Date Anchor
-        # The right handle of this slider now drives the "Analysis Date"
         selected_range = st.slider(
             "Filter Range (Right handle = Analysis Date)",
             min_value=min_date,
-            max_value=max_date,
-            value=(max_date - timedelta(days=180), max_date),
+            max_value=max_data_date, # LOCK THIS TO DATA
+            value=(max_data_date - timedelta(days=180), max_data_date),
             format="YYYY-MM-DD"
         )
         
