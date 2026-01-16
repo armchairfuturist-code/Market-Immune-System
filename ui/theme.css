@@ -1,0 +1,42 @@
+/* MetaMint Theme */
+.stApp {
+    background-color: #0E1117;
+    color: #FAFAFA;
+}
+
+/* Metric Cards */
+div[data-testid="stMetricValue"] {
+    color: #FAFAFA; 
+}
+
+div[data-testid="stMetricLabel"] {
+    color: #00FF80; /* Neon Green */
+}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    background-color: #0E1117;
+    border-right: 1px solid #262730;
+}
+
+/* Custom Cards */
+.css-card {
+    background-color: #262730;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid #444;
+}
+
+/* Plotly Charts Background */
+.js-plotly-plot .plotly .main-svg {
+    background: transparent !important;
+}
+
+h1, h2, h3 {
+    color: #FAFAFA;
+}
+
+/* Accent Colors */
+.accent-green { color: #00FF80; }
+.accent-red { color: #FF4B4B; }
+.accent-amber { color: #FFAA00; }
