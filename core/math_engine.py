@@ -318,17 +318,21 @@ def calculate_institutional_ratios(prices_df):
             ratio = prices_df[num] / prices_df[den]
             
             # 20-day trend
-            ratio_ma = ratio.rolling(window=20).mean()
             current_val = ratio.iloc[-1]
             prev_val = ratio.iloc[-20] if len(ratio) > 20 else current_val
-            
             trend = "Rising" if current_val > prev_val else "Falling"
+            
+            # Z-Score for Tug-of-War (252d baseline)
+            rolling_mean = ratio.rolling(window=252, min_periods=100).mean()
+            rolling_std = ratio.rolling(window=252, min_periods=100).std()
+            z_score = (current_val - rolling_mean.iloc[-1]) / rolling_std.iloc[-1] if not rolling_std.empty else 0.0
             
             results.append({
                 "Pair": f"{num}/{den}",
                 "Trend": trend,
                 "Label": label,
-                "Value": current_val
+                "Value": current_val,
+                "Z-Score": z_score
             })
             
     return pd.DataFrame(results)
