@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 import config
-from core import data_loader, math_engine, macro_connector
+from core import data_loader, math_engine, macro_connector, cycle_engine
 from ui import charts
 import yfinance as yf
 
@@ -97,9 +97,12 @@ def run_math(df_c, df_v):
     rotation_df = math_engine.calculate_capital_rotation(df_c)
     crypto_z = math_engine.calculate_crypto_stress(df_c)
     
-    return turbulence, absorption, hurst_spy, amihud_spy, rotation_df, crypto_z
+    # Cycle Detection
+    cycle_phase, cycle_details = cycle_engine.detect_market_cycle(df_c)
+    
+    return turbulence, absorption, hurst_spy, amihud_spy, rotation_df, crypto_z, cycle_phase, cycle_details
 
-turb_series, abs_series, hurst_series, amihud_series, rotation_data, last_crypto_z = run_math(market_close, market_vol)
+turb_series, abs_series, hurst_series, amihud_series, rotation_data, last_crypto_z, current_cycle, cycle_data = run_math(market_close, market_vol)
 
 # Slice Data
 analysis_ts = pd.Timestamp(analysis_date)
@@ -185,14 +188,19 @@ with c2:
         st.write("🛡️ Hedging: **Optional**")
 
 with c3:
-    st.markdown("**Opportunity Engine**")
-    if not rotation_data.empty:
-        top_sectors = rotation_data.head(3)
-        st.write("Cycle Leaders:")
-        for idx, row in top_sectors.iterrows():
-            st.write(f"• **{row['Sector']}**: {row['Trend']}")
-    else:
-        st.write("No signal.")
+    st.markdown("**Market Cycle**")
+    st.metric("Phase", current_cycle.split(":")[0]) # Show "Phase I", "Phase II" etc
+    
+    # Cycle Explainer Tooltip logic
+    cycle_desc = {
+        "Phase I: Early Cycle (Recovery)": "Economy recovering. Rates low. Best: Financials, Real Estate, Discretionary.",
+        "Phase II: Mid-Cycle (Expansion)": "Growth steady. Profits peak. Best: Tech, Comm Services.",
+        "Phase III: Late Cycle (Slowdown)": "Inflation high. Rates rising. Best: Energy, Materials.",
+        "Phase IV: Recession (Contraction)": "Economy shrinking. Fear high. Best: Staples, Healthcare, Utilities."
+    }
+    
+    st.caption(f"*{cycle_desc.get(current_cycle, '')}*")
+    st.caption("Forecast Window: 7-14 Days")
 
 with c4:
     st.markdown("**Analysis**")
@@ -203,6 +211,29 @@ with c4:
         st.error("Systemic Failure")
     else:
         st.write("No anomalies detected.")
+
+with st.expander("📘 Regime Definitions (Layman's Guide)"):
+    st.markdown("""
+    **What is a 'Fragile Rally'?**
+    Imagine a car speeding up (Prices Rising) while the engine is shaking violently (High Fragility/Absorption).
+    - **Context:** Investors are buying, but they are all buying the *same* few stocks. If one falls, they all fall.
+    - **Risk:** High chance of a sudden "air pocket" drop.
+    
+    **Other Regimes:**
+    - **Normal:** Smooth sailing. Low turbulence, independent asset movement.
+    - **Structural Divergence:** Price is going up, but the "smart money" (Turbulence) detects cracks under the surface. A trap.
+    - **Systemic Sell-Off:** The crash. Everything falls together. Cash is King.
+    - **Crash Alert:** Extreme volatility readings usually seen *during* or immediately *before* a collapse.
+    """)
+    
+    st.markdown("---")
+    st.markdown("""
+    **The 4 Market Cycles:**
+    1. **Early Cycle (Recovery):** Post-recession. Low rates. *Buy Banks, Real Estate.*
+    2. **Mid-Cycle (Expansion):** Steady growth. *Buy Tech.*
+    3. **Late Cycle (Slowdown):** Overheating/Inflation. *Buy Energy, Materials.*
+    4. **Recession (Contraction):** Fear. *Buy Toothpaste (Staples), Utilities.*
+    """)
 
 st.markdown("---")
 
