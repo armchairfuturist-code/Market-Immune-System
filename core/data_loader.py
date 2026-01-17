@@ -156,6 +156,20 @@ def fetch_next_earnings(tickers, limit=10):
         return pd.DataFrame(earnings_data).sort_values("Date")
     return pd.DataFrame(columns=["Ticker", "Date"])
 
+def fetch_futures_data(period="1mo"):
+    """
+    Fetches S&P 500 Futures (ES=F) for trend projection.
+    """
+    try:
+        # Fetch generic future
+        f = yf.download("ES=F", period=period, progress=False, threads=False)
+        if isinstance(f.columns, pd.MultiIndex):
+            return f['Close']['ES=F']
+        return f['Close']
+    except Exception as e:
+        print(f"Futures fetch failed: {e}")
+        return pd.Series()
+
 def fetch_macro_data():
     """
     Fetches macro data from FRED.

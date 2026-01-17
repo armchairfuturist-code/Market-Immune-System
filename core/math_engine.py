@@ -306,3 +306,16 @@ def calculate_crypto_stress(prices_df, window=30):
     if not avg_z.empty:
         return avg_z.iloc[-1]
     return 0.0
+
+def calculate_sector_turbulence(prices_df, sector_assets, lookback=365):
+    """
+    Calculates Turbulence for a specific sector subset.
+    """
+    valid_assets = [c for c in sector_assets if c in prices_df.columns]
+    # Need reasonable number of assets for covariance?
+    # Mahalanobis on small N is fine if T is large enough.
+    if len(valid_assets) < 2:
+        return pd.Series(index=prices_df.index).fillna(0)
+        
+    subset = prices_df[valid_assets]
+    return calculate_turbulence(subset, lookback=lookback)

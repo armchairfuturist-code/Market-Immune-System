@@ -3,18 +3,15 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import config
 
-def plot_divergence_chart(prices, turbulence, ma_window=50):
+def plot_divergence_chart(prices, turbulence, ma_window=50, futures_data=None):
     """
     Creates the main Divergence Detector chart.
     Turbulence (Left Axis), Price (Right Axis).
-    Includes Thresholds and MA.
+    Includes Thresholds, MA, and Futures Projection.
     """
     
     # Calculate MA
     ma = prices.rolling(window=ma_window).mean()
-    
-    # Identify Green Shading Zones
-    # "Turbulence > 180 AND SPX > 50-day MA"
     
     # Align dates
     common_index = prices.index.intersection(turbulence.index)
@@ -22,12 +19,13 @@ def plot_divergence_chart(prices, turbulence, ma_window=50):
     turbulence = turbulence.loc[common_index]
     ma = ma.loc[common_index]
     
-    # Calculate Thresholds
+    # Calculate Dynamic Thresholds (Data Parity)
     p95 = turbulence.quantile(0.95)
     p99 = turbulence.quantile(0.99)
     
-    # Create mask
-    mask = (turbulence > config.REGIME_TURBULENCE_HIGH) & (prices > ma)
+    # Identify Green Shading Zones (Divergence Signal)
+    # Logic: Turbulence > 95th Percentile AND Price > 50MA
+    mask = (turbulence > p95) & (prices > ma)
     
     # Create Figure with Secondary Y Axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -37,10 +35,10 @@ def plot_divergence_chart(prices, turbulence, ma_window=50):
         go.Scatter(
             x=turbulence.index, 
             y=turbulence, 
-            name="Turbulence",
+            name="Market Turbulence",
             fill='tozeroy',
-            line=dict(color=config.COLOR_ACCENT_RED, width=1),
-            opacity=0.5
+            line=dict(color=config.COLOR_ACCENT_RED, width=1.5),
+            opacity=0.8
         ),
         secondary_y=False
     )
@@ -50,8 +48,8 @@ def plot_divergence_chart(prices, turbulence, ma_window=50):
         go.Scatter(
             x=prices.index, 
             y=prices, 
-            name="SPX Price",
-            line=dict(color="#FFFFFF", width=2)
+            name="SPX",
+            line=dict(color="#ECF0F1", width=2)
         ),
         secondary_y=True
     )
@@ -61,15 +59,57 @@ def plot_divergence_chart(prices, turbulence, ma_window=50):
         go.Scatter(
             x=ma.index, 
             y=ma, 
-            name=f"SPX {ma_window}d MA",
-            line=dict(color="#CCCCCC", width=1, dash="dot")
+            name=f"SPX {ma_window}-MA",
+            line=dict(color="#AAB7B8", width=1.5, dash="dash")
         ),
         secondary_y=True
     )
     
-    # Add Threshold Lines (Left Axis)
-    fig.add_hline(y=p95, line_dash="dot", line_color=config.COLOR_ACCENT_AMBER, annotation_text="95% Warning", secondary_y=False)
-    fig.add_hline(y=p99, line_dash="dot", line_color=config.COLOR_ACCENT_RED, annotation_text="99% Extreme", secondary_y=False)
+    # Futures Projection
+    if futures_data is not None and not futures_data.empty and not prices.empty:
+        try:
+            recent_futures = futures_data.tail(5)
+            if len(recent_futures) > 1:
+                f_start = recent_futures.iloc[0]
+                f_end = recent_futures.iloc[-1]
+                pct_change = (f_end - f_start) / f_start
+                daily_drift = pct_change / len(recent_futures)
+                
+                last_price = prices.iloc[-1]
+                last_date = prices.index[-1]
+                
+                proj_dates = [last_date + pd.Timedelta(days=i) for i in range(1, 15)]
+                proj_prices = [last_price * (1 + daily_drift * i) for i in range(1, 15)]
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=proj_dates,
+                        y=proj_prices,
+                        name="Trend Projection",
+                        line=dict(color="#00C853" if daily_drift > 0 else "#FF1744", width=2, dash="dot")
+                    ),
+                    secondary_y=True
+                )
+        except Exception as e:
+            print(f"Projection Error: {e}")
+
+    # Add Threshold Lines (Left Axis) - Reference Parity
+    fig.add_hline(
+        y=p95, 
+        line_dash="dash", 
+        line_color="#F1C40F", # Gold
+        annotation_text=f"Warning Threshold (95th: {p95:.0f})", 
+        annotation_position="top left",
+        secondary_y=False
+    )
+    fig.add_hline(
+        y=p99, 
+        line_dash="dash", 
+        line_color="#E74C3C", # Red
+        annotation_text=f"Extreme Threshold (99th: {p99:.0f})", 
+        annotation_position="top left",
+        secondary_y=False
+    )
     
     # Add Green Shading (VRects)
     is_active = False
@@ -83,23 +123,22 @@ def plot_divergence_chart(prices, turbulence, ma_window=50):
             is_active = False
             end_date = date
             
-            # Add shape
             fig.add_vrect(
                 x0=start_date, x1=end_date,
-                fillcolor=config.COLOR_ACCENT_GREEN, opacity=0.1,
+                fillcolor=config.COLOR_ACCENT_GREEN, opacity=0.15,
                 layer="below", line_width=0,
             )
             
     if is_active:
         fig.add_vrect(
             x0=start_date, x1=mask.index[-1],
-            fillcolor=config.COLOR_ACCENT_GREEN, opacity=0.1,
+            fillcolor=config.COLOR_ACCENT_GREEN, opacity=0.15,
             layer="below", line_width=0,
         )
 
     # Layout Updates
     fig.update_layout(
-        title="Divergence Detector (Turbulence vs. Price)",
+        title="<b>DIVERGENCE DETECTOR: Turbulence vs SPX</b>",
         template="plotly_dark",
         paper_bgcolor=config.COLOR_BG,
         plot_bgcolor=config.COLOR_BG,
@@ -109,9 +148,9 @@ def plot_divergence_chart(prices, turbulence, ma_window=50):
     )
     
     # Left Axis: Turbulence
-    fig.update_yaxes(title_text="Turbulence Score", secondary_y=False, showgrid=True, gridcolor="#333", range=[0, 1000])
+    fig.update_yaxes(title_text="Market Turbulence", secondary_y=False, showgrid=True, gridcolor="#333", range=[0, 650])
     # Right Axis: Price
-    fig.update_yaxes(title_text="SPX Price", secondary_y=True, showgrid=False)
+    fig.update_yaxes(title_text="SPX Level", secondary_y=True, showgrid=False)
     
     return fig
 
