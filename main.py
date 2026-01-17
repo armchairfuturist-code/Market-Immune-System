@@ -312,12 +312,56 @@ st.caption("Strategic recommendations based on relative asset flows (20-day tren
 if not macro_ratios_df.empty:
     # Pre-map labels and logic
     macro_map = {
-        "SPY/TLT": {"label": "Risk Appetite", "left": "Bonds (Safe)", "right": "Stocks (Growth)", "flip": False, "desc": "Stocks vs. Bonds. When this rises, investors are 'Risk-On'—they prefer profits over the safety of government debt."},
-        "XLY/XLP": {"label": "Consumer Mood", "left": "Needs (XLP)", "right": "Wants (XLY)", "flip": False, "desc": "Wants vs. Needs. Rising means people are buying Ferraris (XLY); falling means they are only buying Toothpaste (XLP). Falling is a recession warning."},
-        "GLD/SPY": {"label": "Fear vs. Growth", "left": "Gold (Fear)", "right": "Stocks (Growth)", "flip": True, "desc": "Gold vs. Stocks. When this rises, the 'Smart Money' is buying insurance (Gold) because they don't trust the stock market rally."},
-        "EEM/SPY": {"label": "Global Liquidity", "left": "USA (SPY)", "right": "World (EEM)", "flip": False, "desc": "World vs. USA. Rising means money is flowing into high-risk global markets. Falling means money is 'Hiding in the US Dollar.'"},
-        "CPER/GLD": {"label": "Economic Growth", "left": "Safety (Gold)", "right": "Industrial (CPER)", "flip": False, "desc": "Industrial vs. Safety. Copper is used to build things; Gold is used to hide wealth. Rising means the actual global economy is expanding."}
+        "SPY/TLT": {
+            "label": "Stocks vs Bonds", 
+            "left": "Bonds (Safe)", 
+            "right": "Stocks (Growth)", 
+            "flip": False, 
+            "desc": "When this rises, investors prefer profits over the safety of government debt.",
+            "safety_if": "Falling"
+        },
+        "XLY/XLP": {
+            "label": "Wants vs Needs", 
+            "left": "Needs (XLP)", 
+            "right": "Wants (XLY)", 
+            "flip": False, 
+            "desc": "Compares luxury spending (Discretionary) to essential spending (Staples). If falling, it suggests the average person is feeling the pinch.",
+            "safety_if": "Falling"
+        },
+        "GLD/SPY": {
+            "label": "Gold vs Stocks", 
+            "left": "Gold (Fear)", 
+            "right": "Stocks (Growth)", 
+            "flip": True, 
+            "desc": "When this rises, the 'Smart Money' is buying insurance (Gold) because they don't trust the stock market rally.",
+            "safety_if": "Rising"
+        },
+        "EEM/SPY": {
+            "label": "World vs USA", 
+            "left": "USA (SPY)", 
+            "right": "World (EEM)", 
+            "flip": False, 
+            "desc": "Rising means money is flowing into high-risk global markets. Falling means money is 'Hiding in the US Dollar.'",
+            "safety_if": "Falling"
+        },
+        "CPER/GLD": {
+            "label": "Industrial vs Safety", 
+            "left": "Safety (Gold)", 
+            "right": "Industrial (CPER)", 
+            "flip": False, 
+            "desc": "Copper is used to build things; Gold is used to hide wealth. Rising means the actual global economy is expanding.",
+            "safety_if": "Falling"
+        }
     }
+    
+    safety_count = 0
+    for i, row in macro_ratios_df.iterrows():
+        pair = row['Pair']
+        if pair in macro_map and row['Trend'] == macro_map[pair]['safety_if']:
+            safety_count += 1
+            
+    if safety_count >= 3:
+        st.warning("⚠️ **UNDERLYING CAUTION:** Macro indicators are moving toward defensive positions.")
     
     cols = st.columns(2)
     for i, (idx, row) in enumerate(macro_ratios_df.iterrows()):
@@ -328,8 +372,7 @@ if not macro_ratios_df.empty:
         col_idx = i % 2
         with cols[col_idx]:
             with st.container(border=True):
-                st.markdown(f"**{m_info['label']}**")
-                st.caption(m_info['desc'])
+                st.markdown(f"**{m_info['label']}**", help=m_info['desc'])
                 
                 # Tug of War Logic
                 z = row.get('Z-Score', 0.0)
@@ -345,8 +388,12 @@ if not macro_ratios_df.empty:
                 t_cols[1].progress(prog_val)
                 t_cols[2].markdown(f"<div style='text-align: left; color: #888; font-size: 0.8rem;'>{m_info['right']}</div>", unsafe_allow_html=True)
                 
-                winner = m_info['right'] if prog_val > 50 else m_info['left']
-                st.markdown(f"<div style='text-align: center; color: #00C853; font-weight: bold;'>Winner: {winner}</div>", unsafe_allow_html=True)
+                # Winner Logic
+                trend = row['Trend']
+                if trend == "Rising":
+                    st.markdown(f"<div style='text-align: center; color: #00C853; font-weight: bold;'>Winner: GROWTH</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<div style='text-align: center; color: #FFAB00; font-weight: bold;'>Winner: SAFETY</div>", unsafe_allow_html=True)
 
 st.markdown(f"### 📘 Playbook: {playbook['title']}")
 with st.container(border=True):
@@ -359,7 +406,7 @@ with st.container(border=True):
         
     with cp2:
         st.markdown("#### 🎨 Style Rotation")
-        st.metric("Focus Style", playbook['style'])
+        st.markdown(f"**Focus Style:** {playbook['style']}")
         
     with cp3:
         st.markdown("#### 🔄 Capital Rotation")

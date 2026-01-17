@@ -89,35 +89,35 @@ def generate_immune_report(
     # Summary Narrative (Detailed & Layman)
     # 1. Status & Trend
     if warning_level == "HEALTHY":
-        s1 = "The market is currently showing **healthy** vital signs. Price fluctuations are within normal limits, which usually indicates a stable environment for growth."
+        s1 = "The market is currently showing <span style='color: #00C853; font-weight: bold;'>healthy</span> vital signs. Price fluctuations are within normal limits, which usually indicates a stable environment for growth."
     elif warning_level == "DIVERGENCE DETECTED":
-        s1 = "We are detecting a **hidden warning sign**. While stock prices are rising, the internal pressure (turbulence) is building up, which often happens before a surprise drop."
+        s1 = "We are detecting a <span style='color: #FFAB00; font-weight: bold;'>hidden warning sign</span>. While stock prices are rising, the internal pressure (turbulence) is building up, which often happens before a surprise drop."
     else: # Elevated/Critical
-        s1 = f"The market is currently **unstable** (Stress Index {turbulence_score:.0f}). Prices are moving erratically, which is a classic signal of increased risk."
+        s1 = f"The market is currently <span style='color: #FF1744; font-weight: bold;'>unstable</span> (Stress Index {turbulence_score:.0f}). Prices are moving erratically, which is a classic signal of increased risk."
 
     # 2. Structure (Fragility)
     if absorption_ratio > 0.8:
-        s2 = "Crucially, the market's internal structure is **fragile**. Almost all stocks are moving in the same direction at the same time, meaning a drop in one could drag down everything else."
+        s2 = "Crucially, the market's internal structure is <span style='color: #FF1744; font-weight: bold;'>fragile</span>. Almost all stocks are moving in the same direction at the same time, meaning a drop in one could drag down everything else."
     else:
-        s2 = "Internally, the market structure is **resilient**. Different sectors are moving independently, acting as a shock absorber against bad news."
+        s2 = "Internally, the market structure is <span style='color: #00C853; font-weight: bold;'>resilient</span>. Different sectors are moving independently, acting as a shock absorber against bad news."
 
     # 3. Sentiment/Context
     if sentiment_score > 60:
-        s3 = "Investor sentiment is currently **optimistic**, which can drive prices higher but also leads to complacency."
+        s3 = "Investor sentiment is currently <span style='color: #00C853; font-weight: bold;'>optimistic</span>, which can drive prices higher but also leads to complacency."
     elif sentiment_score < 40:
-        s3 = "Investor sentiment is **fearful**, which often creates buying opportunities for patient investors."
+        s3 = "Investor sentiment is <span style='color: #FF1744; font-weight: bold;'>fearful</span>, which often creates buying opportunities for patient investors."
     else:
-        s3 = "Investor sentiment is currently **neutral**, showing no signs of extreme panic or greed."
+        s3 = "Investor sentiment is currently <span style='color: #888; font-weight: bold;'>neutral</span>, showing no signs of extreme panic or greed."
 
     # 4. Layman Action
     if regime == "NORMAL":
-        s4 = "For most investors, this is a good time to **stay invested** and follow your long-term plan."
+        s4 = "For most investors, this is a good time to <span style='color: #00C853; font-weight: bold;'>stay invested</span> and follow your long-term plan."
     elif regime == "FRAGILE RALLY":
-        s4 = "You should be **cautious**. Consider taking some profits off the table or ensuring you have cash ready for a potential dip."
+        s4 = "You should be <span style='color: #FFAB00; font-weight: bold;'>cautious</span>. Consider taking some profits off the table or ensuring you have cash ready for a potential dip."
     elif "DIVERGENCE" in regime:
-        s4 = "It is smart to **reduce risk** right now. Don't be fooled by the rising prices; focus on protecting what you have made."
+        s4 = "It is smart to <span style='color: #FFAB00; font-weight: bold;'>reduce risk</span> right now. Don't be fooled by the rising prices; focus on protecting what you have made."
     else: # Crash/Sell-off
-        s4 = "The safest move right now is **defense**. Avoid making big new bets until the storm passes."
+        s4 = "The safest move right now is <span style='color: #FF1744; font-weight: bold;'>defense</span>. Avoid making big new bets until the storm passes."
     
     summary_narrative = f"{s1} {s2} {s3} {s4}"
 
