@@ -297,20 +297,76 @@ st.markdown("---")
 
 # Metrics Row
 turb_delta = "Weekend Mode" if is_weekend else "Low Vol" if last_turb < 50 else "Active"
+
+# Dynamic Interpretations
+# 1. Turbulence
+turb_interp = "Calm/Normal"
+if last_turb > 180: turb_interp = "Elevated Stress"
+if last_turb > 370: turb_interp = "CRITICAL Instability"
+turb_help = f"""**Definition:** Measures how 'weird' or unusual today's price moves are compared to the last year.\n\n**Significance:** High turbulence often precedes crashes. It detects hidden stress before price drops.\n\n**Current Status:** {last_turb:.0f} -> {turb_interp}."""
+
+# 2. Fragility (Absorption)
+abs_interp = "Resilient (Diverse)"
+if last_abs > 0.80: abs_interp = "Highly Fragile (Unified)"
+abs_help = f"""**Definition:** The % of assets moving in lockstep.\n\n**Significance:** When everything moves together (>80%), diversification fails. A crash in one asset drags down everything.\n\n**Current Status:** {last_abs:.0%}: -> {abs_interp}."""
+
+# 3. Hurst
+hurst_interp = "Random Walk (Healthy)"
+if last_hurst > 0.65: hurst_interp = "Trending"
+if last_hurst > 0.75: hurst_interp = "Crowded/Brittle Trend"
+hurst_help = f"""**Definition:** Measures how 'persistent' a trend is.\n\n**Significance:** High scores (>0.75) mean everyone is on the same side of the trade. If they rush for the exit, price collapses.\n\n**Current Status:** {last_hurst:.2f} -> {hurst_interp}."""
+
+# 4. Liquidity (Amihud)
+liq_interp = "Normal Liquidity"
+if last_amihud > 1.0: liq_interp = "Thin Liquidity"
+if last_amihud > 2.0: liq_interp = "Liquidity Hole (Danger)"
+liq_help = f"""**Definition:** How much price moves per dollar traded.\n\n**Significance:** 'Liquidity Holes' mean small sell orders cause huge price drops. Essential for crash detection.\n\n**Current Status:** {last_amihud:.1f}σ -> {liq_interp}."""
+
+# 5. Sentiment
+sent_interp = "Neutral"
+if macro_sentiment > 60: sent_interp = "Greed (Contrarian Sell?)"
+if macro_sentiment < 40: sent_interp = "Fear (Contrarian Buy?)"
+sent_help = f"""**Definition:** Aggregated mood from top financial news headlines.\n\n**Significance:** Extreme Greed (>80) often marks tops; Extreme Fear (<20) often marks bottoms.\n\n**Current Status:** {macro_sentiment:.0f} -> {sent_interp}."""
+
+# 6. AI Ratio
+ai_interp = "Normal"
+if ai_ratio > 1.5: ai_interp = "Overheated (Bubble Risk)"
+if ai_ratio < 0.8: ai_interp = "Lagging Market"
+ai_help = f"""**Definition:** Volatility of AI stocks relative to the broad market.\n\n**Significance:** >1.5x means AI is decoupling (Bubble behavior). High risk of mean reversion.\n\n**Current Status:** {ai_ratio:.1f}x -> {ai_interp}."""
+
+# 7. Crypto Ratio
+crypto_interp = "Normal"
+if crypto_ratio > 1.5: crypto_interp = "Speculative Excess"
+crypto_help = f"""**Definition:** Volatility of Crypto relative to the broad market.\n\n**Significance:** Often a leading indicator for risk appetite. If Crypto cracks, stocks often follow.\n\n**Current Status:** {crypto_ratio:.1f}x -> {crypto_interp}."""
+
 m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
-m1.metric("Turbulence", f"{last_turb:.0f}", delta=turb_delta, delta_color="off", help="Mahalanobis Distance.")
-m2.metric("Fragility", f"{last_abs*100:.0f}%", help="Absorption Ratio.")
-m3.metric("Hurst", f"{last_hurst:.2f}", help="Trend Persistence.")
-m4.metric("Liquidity", f"{last_amihud:.1f}", help="Amihud Illiquidity (Z).")
-m5.metric("Sentiment", f"{macro_sentiment:.0f}", help="News Sentiment.")
-m6.metric("AI/Mkt Ratio", f"{ai_ratio:.1f}x", help="AI Sector Turbulence / Market.")
-m7.metric("Crypto/Mkt", f"{crypto_ratio:.1f}x", help="Crypto Turbulence / Market.")
+m1.metric("Turbulence", f"{last_turb:.0f}", delta=turb_delta, delta_color="off", help=turb_help)
+m2.metric("Fragility", f"{last_abs*100:.0f}%", help=abs_help)
+m3.metric("Hurst", f"{last_hurst:.2f}", help=hurst_help)
+m4.metric("Liquidity", f"{last_amihud:.1f}", help=liq_help)
+m5.metric("Sentiment", f"{macro_sentiment:.0f}", help=sent_help)
+m6.metric("AI/Mkt Ratio", f"{ai_ratio:.1f}x", help=ai_help)
+m7.metric("Crypto/Mkt", f"{crypto_ratio:.1f}x", help=crypto_help)
 
 # Macro Row
 st.markdown("#### 🌍 Macro Truth")
 mac1, mac2 = st.columns(2)
-mac1.metric(f"Yield Curve (10Y-2Y)", f"{last_yield:.2f}%", delta="Inverted" if last_yield < 0 else "Normal", help="Yield Curve.")
-mac2.metric("Credit Stress (HY)", f"{macro_credit if isinstance(macro_credit, float) else 'N/A'}", help="HY Spread.")
+
+# Yield Curve Help
+yield_interp = "Normal (Growth)"
+if last_yield < 0: yield_interp = "Inverted (Recession Warning)"
+elif last_yield < 0.2: yield_interp = "Flat (Caution)"
+yield_help = f"""**Definition:** The difference between 10-Year and 2-Year Treasury yields.\n\n**Significance:** The most reliable recession predictor in history. Inversion (<0) signals trouble ahead.\n\n**Current Status:** {last_yield:.2f}% -> {yield_interp}."""
+
+# Credit Stress Help
+credit_val = macro_credit if isinstance(macro_credit, float) else 0.0
+credit_interp = "Stable"
+if credit_val > 1.0: credit_interp = "Stress Rising"
+if credit_val > 2.0: credit_interp = "Credit Freeze"
+credit_help = f"""**Definition:** High Yield Bond Spreads (Risk Premium).\n\n**Significance:** If lenders demand high interest to lend to risky companies, the credit cycle is breaking.\n\n**Current Status:** {credit_val:.1f}σ -> {credit_interp}."""
+
+mac1.metric(f"Yield Curve (10Y-2Y)", f"{last_yield:.2f}%", delta="Inverted" if last_yield < 0 else "Normal", help=yield_help)
+mac2.metric("Credit Stress (HY)", f"{credit_val:.1f}σ" if isinstance(macro_credit, float) else "N/A", help=credit_help)
 
 # Charts
 st.markdown("### 📉 Market Health Monitor")
