@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 import config
-from core import data_loader, math_engine, macro_connector, cycle_engine
+from core import data_loader, math_engine, macro_connector, cycle_engine, report_generator
 from ui import charts
 import yfinance as yf
 
@@ -47,10 +47,8 @@ st.sidebar.info("v3.0 | Zero-Trust Engine")
 @st.cache_data(ttl=3600)
 def get_market_data(start_date):
     # Fetch with buffer for calculations (Turbulence needs 365d history)
-    # Ensure start_date is date object
     if isinstance(start_date, datetime.datetime):
         start_date = start_date.date()
-        
     buffer_date = start_date - datetime.timedelta(days=365)
     
     df_close, df_vol = data_loader.fetch_market_data(config.ASSET_UNIVERSE, start_date=buffer_date)
@@ -111,18 +109,23 @@ def run_math(df_c, df_v):
     ai_turb = math_engine.calculate_sector_turbulence(df_c, config.GROWTH_ASSETS)
     crypto_turb = math_engine.calculate_sector_turbulence(df_c, config.CRYPTO_ASSETS)
     
+    # Macro Ratios
+    macro_ratios = math_engine.calculate_institutional_ratios(df_c)
+    
     # Cycle Detection
     cycle_phase, cycle_details = cycle_engine.detect_market_cycle(df_c)
     
-    return turbulence, absorption, hurst_spy, amihud_spy, rotation_df, crypto_z, cycle_phase, cycle_details, ai_turb, crypto_turb
+    return (turbulence, absorption, hurst_spy, amihud_spy, rotation_df, 
+            crypto_z, cycle_phase, cycle_details, macro_ratios, ai_turb, crypto_turb)
 
-turb_series, abs_series, hurst_series, amihud_series, rotation_data, last_crypto_z, current_cycle, cycle_data, ai_turb_series, crypto_turb_series = run_math(market_close, market_vol)
+(turb_series, abs_series, hurst_series, amihud_series, rotation_data, 
+ last_crypto_z, current_cycle, cycle_data, macro_ratios_df, 
+ ai_turb_series, crypto_turb_series) = run_math(market_close, market_vol)
 
 # Slice Data (Display Period)
 analysis_ts = pd.Timestamp(analysis_date)
 start_ts = pd.Timestamp(start_date)
 
-# Slice from user start_date to analysis_date
 curr_close = market_close.loc[start_ts:analysis_ts]
 curr_turb = turb_series.loc[start_ts:analysis_ts]
 curr_abs = abs_series.loc[start_ts:analysis_ts]
@@ -146,7 +149,6 @@ last_yield = curr_yield.iloc[-1] if not curr_yield.empty else 0.0
 # Sector Turbulence Ratios
 last_ai_turb = curr_ai_turb.iloc[-1] if not curr_ai_turb.empty else last_turb
 last_crypto_turb = curr_crypto_turb.iloc[-1] if not curr_crypto_turb.empty else last_turb
-# Avoid div/0
 safe_turb = last_turb if last_turb > 1 else 1.0
 ai_ratio = last_ai_turb / safe_turb
 crypto_ratio = last_crypto_turb / safe_turb
@@ -159,23 +161,17 @@ if spy_col in curr_close.columns:
     ma50 = spy_p.rolling(50).mean().iloc[-1]
     price = spy_p.iloc[-1]
     trend = "UP" if price > ma50 else "DOWN"
-    
-    # Check if SPY is flat (1-day return)
     if len(spy_p) > 1:
         spy_ret = (spy_p.iloc[-1] / spy_p.iloc[-2]) - 1
-        spy_flat = abs(spy_ret) < 0.005 # < 0.5%
+        spy_flat = abs(spy_ret) < 0.005
 else:
     trend = "UNKNOWN"
     spy_p = pd.Series()
+    price, ma50 = 0.0, 0.0
 
 regime = math_engine.get_market_regime(last_turb, last_abs, trend)
 crypto_stress_signal = (last_crypto_z > 2.0) and spy_flat
-
-from core import report_generator
-
-# ... (rest of imports)
-
-# ... (skip to UI Layout section)
+super_signal = math_engine.generate_super_signal(last_amihud, last_hurst, curr_close["SPY"])
 
 # 6. UI Layout
 
@@ -184,22 +180,20 @@ last_date = curr_turb.index[-1]
 day_name = last_date.strftime("%A")
 is_weekend = day_name in ["Saturday", "Sunday"]
 
-# Calculate Inputs for Report
+st.sidebar.markdown(f"**Data Horizon:** {last_date.date()} ({day_name})")
+
+# Generate Report
 vix_val = curr_close["^VIX"].iloc[-1] if "^VIX" in curr_close.columns else 0.0
 is_divergence = (last_turb > 180) and (trend == "UP")
 
-# Calculate Days Elevated (Consecutive days > 180)
 days_elevated = 0
 if not curr_turb.empty:
     elevated_mask = curr_turb > 180
     if elevated_mask.iloc[-1]:
         for x in elevated_mask[::-1]:
-            if x:
-                days_elevated += 1
-            else:
-                break
+            if x: days_elevated += 1
+            else: break
 
-# Generate Report
 status_report = report_generator.generate_immune_report(
     date=last_date.date(),
     turbulence_score=last_turb,
@@ -215,42 +209,30 @@ status_report = report_generator.generate_immune_report(
 
 # Display Report
 with st.container(border=True):
-    # Header & Badge
     c_head1, c_head2 = st.columns([3, 1])
     c_head1.subheader(f"🛡️ IMMUNE SYSTEM STATUS: {status_report['warning_level']}")
-    
     if status_report['badge_color'] == 'green':
         c_head2.success("System Healthy")
     elif status_report['badge_color'] == 'yellow':
         c_head2.warning("System Elevated")
     else:
         c_head2.error("System Critical")
-        
     st.divider()
-    
-    # Metrics Grid
     c_m1, c_m2 = st.columns(2)
-    
     with c_m1:
         st.markdown("#### 📊 Core Metrics")
         for k, v in status_report['core_metrics'].items():
             st.text(f"{k}: {v}")
-            
     with c_m2:
         st.markdown("#### 🧠 Context")
         for k, v in status_report['context_metrics'].items():
             st.text(f"{k}: {v}")
-            
     st.divider()
-    
-    # Interpretation & Actions
     c_i1, c_i2 = st.columns(2)
-    
     with c_i1:
         st.markdown("#### 🔎 Interpretation")
         for line in status_report['interpretation']:
             st.info(line)
-            
     with c_i2:
         st.markdown("#### ⚡ Actionable Insights")
         for line in status_report['actions']:
@@ -259,126 +241,53 @@ with st.container(border=True):
             else:
                 st.warning(line)
 
-# Header Banner
-if regime in ["CRASH ALERT", "SYSTEMIC SELL-OFF"]:
-    st.error(f"⚠️ SYSTEM WARNING: {regime} DETECTED")
-elif regime == "FRAGILE RALLY":
-    st.warning(f"⚠️ SYSTEM WARNING: {regime} DETECTED")
-elif crypto_stress_signal:
-    st.warning("⚠️ ALERT: Crypto-Led Stress Detected")
-else:
-    st.success(f"System Status: {regime}")
+# Advanced Quant Signals
+st.markdown("### ⚡ Advanced Quant Signals")
+aq1, aq2, aq3 = st.columns(3)
+aq1.metric("Math Super-Signal", "ACTIVE", delta=super_signal, delta_color="normal")
+aq2.metric("Hurst Exponent (Fractal)", f"{last_hurst:.2f}")
+aq3.metric("Liquidity Stress (Amihud Z)", f"{last_amihud:.1f}σ")
 
-# The Tactical HUD
-st.markdown("### 🛸 Tactical HUD")
-c1, c2, c3, c4 = st.columns(4)
+st.markdown("---")
 
-with c1:
-    st.markdown(f"**Regime Status**")
-    st.metric(
-        "Regime", 
-        regime, 
-        delta="Structure Check",
-        help=f"Current State: {regime}. \nNormal: Safe.\nFragile Rally: Price rising on weak structure (Danger).\nSystemic Sell-Off: Broad crash.\nDivergence: Hidden stress."
-    )
-    st.caption("Trend + Structure Analysis")
+# Institutional Macro Ratios
+st.markdown("### 🏛️ Institutional Macro Ratios")
+st.caption("Strategic recommendations based on relative asset flows (20-day trend).")
 
-with c2:
-    st.markdown("**Recommended Actions**")
-    # Logic based on regime
-    if regime in ["NORMAL", "FRAGILE RALLY"]:
-        stops_txt = "Standard (ATR)"
-        lev_txt = "Allowed (1x-2x)"
-        hedge_txt = "Optional"
-    else:
-        stops_txt = "Tight (Trailing)"
-        lev_txt = "Restricted (Cash)"
-        hedge_txt = "Put Protection"
-        
-    st.metric("Stops", stops_txt, help="Exit Threshold.\nStandard: Allow normal noise.\nTight: Exit on first weakness (Capital Preservation).")
-    st.metric("Leverage", lev_txt, help="Exposure Multiplier.\nAllowed: Risk-on.\nRestricted: De-lever to prevent ruin.")
-
-with c3:
-    st.markdown("**Market Cycle**")
-    st.metric(
-        "Phase", 
-        current_cycle.split(":")[0], 
-        help="Economic Phase.\nEarly: Recovery (Banks).\nMid: Expansion (Tech).\nLate: Slowdown (Energy).\nRecession: Contraction (Staples)."
-    )
-    st.caption(f"Strategy: {current_cycle.split(':')[0]}")
-
-with c4:
-    st.markdown("**Analysis**")
-    if crypto_stress_signal:
-        st.error("⚠️ Crypto Stress")
-        st.caption("Speculative assets cracking. Risk-off imminent.")
-    elif regime == "SYSTEMIC SELL-OFF":
-        st.error("Systemic Failure")
-    else:
-        st.write("Structure Intact")
-    
-    # Inference
-    st.caption(f"Inference: Market is {trend} with {last_turb:.0f} turbulence.")
-
-with st.expander("📘 Regime Definitions (Layman's Guide)"):
-    st.markdown("""
-    **What is a 'Fragile Rally'?**
-    Imagine a car speeding up (Prices Rising) while the engine is shaking violently (High Fragility/Absorption).
-    - **Context:** Investors are buying, but they are all buying the *same* few stocks. If one falls, they all fall.
-    - **Risk:** High chance of a sudden "air pocket" drop.
-    
-    **Other Regimes:**
-    - **Normal:** Smooth sailing. Low turbulence, independent asset movement.
-    - **Structural Divergence:** Price is going up, but the "smart money" (Turbulence) detects cracks under the surface. A trap.
-    - **Systemic Sell-Off:** The crash. Everything falls together. Cash is King.
-    - **Crash Alert:** Extreme volatility readings usually seen *during* or immediately *before* a collapse.
-    """)
-    
-    st.markdown("---")
-    st.markdown("""
-    **The 4 Market Cycles:**
-    1. **Early Cycle (Recovery):** Post-recession. Low rates. *Buy Banks, Real Estate.*
-    2. **Mid-Cycle (Expansion):** Steady growth. *Buy Tech.*
-    3. **Late Cycle (Slowdown):** Overheating/Inflation. *Buy Energy, Materials.*
-    4. **Recession (Contraction):** Fear. *Buy Toothpaste (Staples), Utilities.*
-    """)
+if not macro_ratios_df.empty:
+    cols = st.columns(2)
+    for i, (idx, row) in enumerate(macro_ratios_df.iterrows()):
+        col_idx = i % 2
+        with cols[col_idx]:
+            with st.container(border=True):
+                interpretations = {
+                    "EEM/SPY": "Overweight Emerging Markets" if row['Trend'] == "Rising" else "Underweight Emerging Markets",
+                    "SPY/TLT": "Risk-On: Stocks > Bonds" if row['Trend'] == "Rising" else "Risk-Off: Bonds > Stocks",
+                    "GLD/SPY": "Defensive Rotation: Gold Leading" if row['Trend'] == "Rising" else "Growth Rotation: Stocks Leading",
+                    "XLY/XLP": "Confident Consumer (Cyclical)" if row['Trend'] == "Rising" else "Defensive Consumer (Staples)",
+                    "CPER/GLD": "Reflationary Growth (Dr. Copper)" if row['Trend'] == "Rising" else "Inflation/Fear Hedge (Gold)"
+                }
+                st.markdown(f"**{row['Pair']} ({row['Trend']})**")
+                st.markdown(f"*{interpretations.get(row['Pair'], row['Label'])}*")
 
 st.markdown("---")
 
 # Metrics Row
-last_date = curr_turb.index[-1]
-day_name = last_date.strftime("%A")
-is_weekend = day_name in ["Saturday", "Sunday"]
-
-st.sidebar.markdown(f"**Data Horizon:** {last_date.date()} ({day_name})")
-
 turb_delta = "Weekend Mode" if is_weekend else "Low Vol" if last_turb < 50 else "Active"
-
-# 7 Columns for Metrics
 m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
-
-m1.metric("Turbulence", f"{last_turb:.0f}", delta=turb_delta, delta_color="off", help="Mahalanobis Distance.\nHow 'weird' is today vs history?\n>180: Stress.\n>370: Crash.")
-m2.metric("Fragility", f"{last_abs*100:.0f}%", help="Absorption Ratio.\n% of assets moving together.\n>80%: Systemic Risk (Lockstep).")
-m3.metric("Hurst", f"{last_hurst:.2f}", help="Trend Persistence.\n>0.75: Crowded Trade (Brittle).\n0.5: Random.")
-m4.metric("Liquidity", f"{last_amihud:.1f}", help="Amihud Illiquidity (Z).\n>2.0: Liquidity Hole (Price crash risk).")
-m5.metric("Sentiment", f"{macro_sentiment:.0f}", help="News Sentiment (0-100).\n<20: Extreme Fear.\n>80: Extreme Greed.")
-m6.metric("AI/Mkt Ratio", f"{ai_ratio:.1f}x", help="AI Sector Turbulence / Market.\n>1.5: AI decoupling (Bubble/Crash).")
-m7.metric("Crypto/Mkt", f"{crypto_ratio:.1f}x", help="Crypto Turbulence / Market.\nHigh ratio: Speculative excess or leading indicator.")
+m1.metric("Turbulence", f"{last_turb:.0f}", delta=turb_delta, delta_color="off", help="Mahalanobis Distance.")
+m2.metric("Fragility", f"{last_abs*100:.0f}%", help="Absorption Ratio.")
+m3.metric("Hurst", f"{last_hurst:.2f}", help="Trend Persistence.")
+m4.metric("Liquidity", f"{last_amihud:.1f}", help="Amihud Illiquidity (Z).")
+m5.metric("Sentiment", f"{macro_sentiment:.0f}", help="News Sentiment.")
+m6.metric("AI/Mkt Ratio", f"{ai_ratio:.1f}x", help="AI Sector Turbulence / Market.")
+m7.metric("Crypto/Mkt", f"{crypto_ratio:.1f}x", help="Crypto Turbulence / Market.")
 
 # Macro Row
 st.markdown("#### 🌍 Macro Truth")
 mac1, mac2 = st.columns(2)
-mac1.metric(
-    f"Yield Curve (10Y-2Y)", 
-    f"{last_yield:.2f}%", 
-    delta="Inverted" if last_yield < 0 else "Normal",
-    help="10Y Minus 2Y Treasury Yield.\nNegative (Inverted): Predicts Recession in 6-18mo.\nDe-inversion: Often marks the Recession start."
-)
-mac2.metric(
-    "Credit Stress (HY)", 
-    f"{macro_credit if isinstance(macro_credit, float) else 'N/A'}",
-    help="High Yield Bond Spreads (Z-Score).\nRising spreads = Credit markets pricing in defaults/stress."
-)
+mac1.metric(f"Yield Curve (10Y-2Y)", f"{last_yield:.2f}%", delta="Inverted" if last_yield < 0 else "Normal", help="Yield Curve.")
+mac2.metric("Credit Stress (HY)", f"{macro_credit if isinstance(macro_credit, float) else 'N/A'}", help="HY Spread.")
 
 # Charts
 st.markdown("### 📉 Market Health Monitor")
@@ -388,14 +297,11 @@ if not spy_p.empty:
 
 # Narrative Battle
 st.markdown("### ⚔️ Narrative Battle")
-# Crypto vs AI
 crypto_cols = [c for c in config.CRYPTO_ASSETS if c in curr_close.columns]
 growth_cols = [c for c in config.GROWTH_ASSETS if c in curr_close.columns]
-
 if crypto_cols and growth_cols:
     c_df = curr_close[crypto_cols].sum(axis=1)
     a_df = curr_close[growth_cols].sum(axis=1)
-    
     fig_battle = charts.plot_narrative_battle(c_df, a_df)
     st.plotly_chart(fig_battle, use_container_width=True)
 

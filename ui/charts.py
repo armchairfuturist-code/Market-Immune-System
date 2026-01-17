@@ -95,18 +95,18 @@ def plot_divergence_chart(prices, turbulence, ma_window=50, futures_data=None):
 
     # Add Threshold Lines (Left Axis) - Reference Parity
     fig.add_hline(
-        y=p95, 
+        y=config.REGIME_DIVERGENCE_THRESHOLD, 
         line_dash="dash", 
         line_color="#F1C40F", # Gold
-        annotation_text=f"Warning Threshold (95th: {p95:.0f})", 
+        annotation_text=f"Trap Zone ({config.REGIME_DIVERGENCE_THRESHOLD})", 
         annotation_position="top left",
         secondary_y=False
     )
     fig.add_hline(
-        y=p99, 
+        y=config.REGIME_TURBULENCE_CRASH, 
         line_dash="dash", 
         line_color="#E74C3C", # Red
-        annotation_text=f"Extreme Threshold (99th: {p99:.0f})", 
+        annotation_text=f"CRASH Level ({config.REGIME_TURBULENCE_CRASH})", 
         annotation_position="top left",
         secondary_y=False
     )

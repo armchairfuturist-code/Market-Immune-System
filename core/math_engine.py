@@ -60,7 +60,24 @@ def calculate_turbulence(prices_df, lookback=365):
             
             x = solve(cov_t, diff, assume_a='pos')
             d_sq = np.dot(diff, x)
-            dist_values[i] = np.sqrt(max(0, d_sq))
+            d = np.sqrt(max(0, d_sq))
+            
+            # Normalize for Activity (Weekends/Holidays)
+            # When only Crypto (10%) is active, raw distance is naturally suppressed.
+            # We scale it up to represent "Equivalent Systemic Turbulence".
+            non_zeros = np.count_nonzero(r_t)
+            total_assets = len(r_t)
+            
+            if total_assets > 0:
+                activity_ratio = max(non_zeros, 1) / total_assets
+                if activity_ratio < 0.25:
+                    # Scale by sqrt(1/ratio) to adjust for degrees of freedom
+                    scale_factor = np.sqrt(1.0 / activity_ratio)
+                    # Cap to prevent noise explosion on very thin days
+                    scale_factor = min(scale_factor, 4.0)
+                    d *= scale_factor
+            
+            dist_values[i] = d
             
         except Exception:
             continue
@@ -73,7 +90,8 @@ def calculate_turbulence(prices_df, lookback=365):
         p99 = 1.0
         
     scaled_score = (raw_series / p99) * config.TURBULENCE_ANCHOR
-    return scaled_score.clip(0, 1000)
+    # Floor at 15 to prevent zero-readings and improve signal-to-noise
+    return scaled_score.clip(15, 1000)
 
 def calculate_absorption_ratio(prices_df, window=60):
     """
@@ -277,6 +295,62 @@ def calculate_capital_rotation(prices_df):
         df = df.sort_values("RS_60d", ascending=False)
         
     return df
+
+def calculate_institutional_ratios(prices_df):
+    """
+    Calculates Macro Ratios and their 20-day trends.
+    Ratios: EEM/SPY, SPY/TLT, GLD/SPY, XLY/XLP, CPER/GLD
+    """
+    pairs = [
+        ("EEM", "SPY", "Emerging Markets vs S&P 500"),
+        ("SPY", "TLT", "Risk-On: Stocks vs Bonds"),
+        ("GLD", "SPY", "Defensive: Gold vs Stocks"),
+        ("XLY", "XLP", "Consumer: Cyclical vs Staples"),
+        ("CPER", "GLD", "Growth: Copper vs Gold")
+    ]
+    
+    results = []
+    for num, den, label in pairs:
+        if num in prices_df.columns and den in prices_df.columns:
+            ratio = prices_df[num] / prices_df[den]
+            
+            # 20-day trend
+            ratio_ma = ratio.rolling(window=20).mean()
+            current_val = ratio.iloc[-1]
+            prev_val = ratio.iloc[-20] if len(ratio) > 20 else current_val
+            
+            trend = "Rising" if current_val > prev_val else "Falling"
+            
+            results.append({
+                "Pair": f"{num}/{den}",
+                "Trend": trend,
+                "Label": label,
+                "Value": current_val
+            })
+            
+    return pd.DataFrame(results)
+
+def generate_super_signal(amihud_z, hurst_val, prices_series):
+    """
+    Synthesizes the 'Math Super-Signal' from multiple quant metrics.
+    """
+    # 1. Check for mean reversion (RSI)
+    delta = prices_series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    last_rsi = rsi.iloc[-1] if not rsi.empty else 50
+
+    # 2. Logic for Signal
+    if amihud_z < -1.0 and hurst_val < 0.4 and last_rsi < 40:
+        return "BUY_SIGNAL: Liquidity Restored + Mean Reversion Opportunity"
+    elif amihud_z > 2.0 and hurst_val > 0.7:
+        return "SELL_SIGNAL: Liquidity Hole + Crowded Trend (Extreme Risk)"
+    elif amihud_z > 1.0:
+        return "WARNING: Liquidity Stress Rising"
+    
+    return "NEUTRAL: Market Structure Stable"
 
 def calculate_crypto_stress(prices_df, window=30):
     """

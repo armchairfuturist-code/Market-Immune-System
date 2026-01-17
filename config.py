@@ -17,7 +17,7 @@ BROAD_ASSETS = [
     "SPY", "QQQ", "DIA", "IWM", "VXX", "TLT", "IEF", "SHY", "LQD", "HYG", 
     "BND", "AGG", "GLD", "SLV", "CPER", "USO", "UNG", "DBC", "PALL", "UUP", 
     "FXE", "FXY", "FXB", "CYB", "XLF", "XLE", "XLK", "XLY", "XLI", "XLB", 
-    "XLRE", "^VIX", "^TNX", "VTV", "VUG" 
+    "XLRE", "XLP", "EEM", "^VIX", "^TNX", "VTV", "VUG" 
     # Removed ^VIX3M, ^IRX as they often cause YF issues or are indices with no volume
 ]
 
@@ -53,7 +53,7 @@ ABSORPTION_THRESHOLD = 0.8 # 80%
 # Regime Thresholds
 REGIME_ABSORPTION_HIGH = 0.85
 REGIME_TURBULENCE_HIGH = 180 # Elevated/Warning
-REGIME_DIVERGENCE_THRESHOLD = 280 # Green Spike/Trap Signal (Optimized for ~25 spikes/3y)
+REGIME_DIVERGENCE_THRESHOLD = 250 # Green Spike/Trap Signal (Optimized for ~25 spikes/3y)
 REGIME_TURBULENCE_CRASH = 370 # Critical
 
 # Colors (MetaMint Premium)
