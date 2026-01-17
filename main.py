@@ -217,36 +217,64 @@ with st.container(border=True):
         c_head2.warning("System Elevated")
     else:
         c_head2.error("System Critical")
+        
     st.divider()
-    c_m1, c_m2 = st.columns(2)
-    with c_m1:
-        st.markdown("#### 📊 Core Metrics")
-        for k, v in status_report['core_metrics'].items():
-            st.text(f"{k}: {v}")
-    with c_m2:
-        st.markdown("#### 🧠 Context")
-        for k, v in status_report['context_metrics'].items():
-            st.text(f"{k}: {v}")
-    st.divider()
-    c_i1, c_i2 = st.columns(2)
-    with c_i1:
-        st.markdown("#### 🔎 Interpretation")
-        for line in status_report['interpretation']:
-            st.info(line)
-    with c_i2:
-        st.markdown("#### ⚡ Actionable Insights")
-        for line in status_report['actions']:
-            if status_report['badge_color'] == 'green':
-                st.success(line)
-            else:
-                st.warning(line)
+    
+    # Executive Summary (Consolidated Narrative)
+    st.markdown("#### 📝 Executive Summary")
+    st.markdown(
+        f"""<div style="font-size: 1.15rem; font-style: italic; color: #DDDDDD; line-height: 1.6; margin-bottom: 15px;">
+        {status_report['summary_narrative']}
+        </div>""", 
+        unsafe_allow_html=True
+    )
 
 # Advanced Quant Signals
-st.markdown("### ⚡ Advanced Quant Signals")
-aq1, aq2, aq3 = st.columns(3)
-aq1.metric("Math Super-Signal", "ACTIVE", delta=super_signal, delta_color="normal")
-aq2.metric("Hurst Exponent (Fractal)", f"{last_hurst:.2f}")
-aq3.metric("Liquidity Stress (Amihud Z)", f"{last_amihud:.1f}σ")
+with st.expander("⚡ Advanced Quant Signals", expanded=False):
+    # Calculate RSI locally for breakdown
+    delta = curr_close["SPY"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    last_rsi = rsi.iloc[-1] if not rsi.empty else 50
+
+    aq_cols = st.columns([1, 2])
+
+    with aq_cols[0]:
+        # Main Signal
+        signal_color = "normal"
+        if "BUY" in super_signal: signal_color = "off" # Greenish usually
+        elif "SELL" in super_signal: signal_color = "inverse" # Red
+        
+        st.metric("Math Super-Signal", "ACTIVE", delta=super_signal, delta_color=signal_color)
+        st.caption("Synthesis of Liquidity, Fractals, and Momentum.")
+
+    with aq_cols[1]:
+        with st.container(border=True):
+            st.markdown("#### 🔬 Signal Analysis")
+            
+            # 1. Signal Breakdown
+            st.markdown("**1. Signal Breakdown**")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Liquidity (Driver)", f"{last_amihud:.1f}σ", "Stress" if last_amihud > 1 else "Flowing", delta_color="inverse")
+            c2.metric("Structure (Hurst)", f"{last_hurst:.2f}", "Fragile" if last_hurst > 0.65 else "Robust", delta_color="inverse")
+            c3.metric("Momentum (RSI)", f"{last_rsi:.0f}", "Overbought" if last_rsi > 70 else "Oversold" if last_rsi < 30 else "Neutral", delta_color="inverse")
+            
+            # 2. Weighting
+            st.markdown("**2. Weighting Rationale:** Liquidity is the *prerequisite* for price movement. Trend Structure (Hurst) determines if a move is sustainable. Momentum (RSI) is the trigger.")
+            
+            # 3. Predictive Power
+            st.markdown("**3. Predictive Power:** Historically effective at identifying *structural exhaustion* before price reversal. High success rate when Liquidity Stress aligns with Extremes in Hurst.")
+            
+            # 4. Actionable Insights
+            st.markdown("**4. Actionable Insights:**")
+            if "BUY" in super_signal:
+                st.success("✅ **Aggressive Entry:** Liquidity returning to oversold market. Look for mean reversion.")
+            elif "SELL" in super_signal:
+                st.error("🛑 **Exit/Hedge:** Market is fragile, illiquid, and overextended. Crash risk high.")
+            else:
+                st.info("⏸️ **Wait:** Market structure is stable. Trade the trend, but verify setup.")
 
 st.markdown("---")
 

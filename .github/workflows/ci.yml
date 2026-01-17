@@ -27,3 +27,7 @@ jobs:
       run: |
         export PYTHONPATH=.
         pytest tests/
+    - name: Create dummy streamlit secrets
+  run: |
+    mkdir -p .streamlit
+    echo 'FRED_API_KEY = "fc2e25e796936565703717197b34efa0"' > .streamlit/secrets.toml

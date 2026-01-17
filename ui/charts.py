@@ -3,6 +3,59 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import config
 
+def create_gauge_chart(value, title, min_val, max_val, thresholds, inverse=False):
+    """
+    Creates a Gauge Chart for metrics like Turbulence or Fragility.
+    thresholds: dict {limit: color} e.g. {180: "orange", 370: "red"}
+    inverse: If True, Low is Bad (Red), High is Good (Green). 
+             Default False (Low is Good/Green).
+    """
+    
+    # Determine bar color based on value
+    bar_color = config.COLOR_ACCENT_GREEN
+    
+    sorted_thresh = sorted(thresholds.keys())
+    
+    # Logic for "Low is Good" (Standard)
+    # < T1 = Green, > T1 = Orange, > T2 = Red
+    if not inverse:
+        if value > sorted_thresh[-1]:
+            bar_color = config.COLOR_ACCENT_RED
+        elif value > sorted_thresh[0]:
+            bar_color = config.COLOR_ACCENT_AMBER
+    else:
+        # Logic for "High is Good" (e.g. Liquidity?) - Not currently used but good to have
+        pass
+
+    fig = go.Figure(go.Indicator(
+        mode = "gauge+number",
+        value = value,
+        domain = {'x': [0, 1], 'y': [0, 1]},
+        title = {'text': title, 'font': {'size': 14, 'color': "#888"}},
+        number = {'font': {'color': "white"}},
+        gauge = {
+            'axis': {'range': [min_val, max_val], 'tickwidth': 1, 'tickcolor': "#333"},
+            'bar': {'color': bar_color},
+            'bgcolor': "#1E1E2E",
+            'borderwidth': 0,
+            'steps': [
+                {'range': [min_val, sorted_thresh[0]], 'color': "rgba(0, 200, 83, 0.1)"},
+                {'range': [sorted_thresh[0], sorted_thresh[1]], 'color': "rgba(255, 171, 0, 0.1)"},
+                {'range': [sorted_thresh[1], max_val], 'color': "rgba(255, 23, 68, 0.1)"}
+            ],
+        }
+    ))
+    
+    fig.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font={'color': "white", 'family': "Inter"},
+        height=150,
+        margin=dict(l=20, r=20, t=30, b=20)
+    )
+    
+    return fig
+
 def plot_divergence_chart(prices, turbulence, ma_window=50, futures_data=None):
     """
     Creates the main Divergence Detector chart.
@@ -25,7 +78,7 @@ def plot_divergence_chart(prices, turbulence, ma_window=50, futures_data=None):
     
     # Identify Green Shading Zones (Divergence Signal)
     # Logic: Turbulence > 95th Percentile AND Price > 50MA
-    mask = (turbulence > p95) & (prices > ma)
+    mask = (turbulence > config.REGIME_DIVERGENCE_THRESHOLD) & (prices > ma)
     
     # Create Figure with Secondary Y Axis
     fig = make_subplots(specs=[[{"secondary_y": True}]])
