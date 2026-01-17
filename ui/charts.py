@@ -88,7 +88,7 @@ def plot_divergence_chart(prices, turbulence, ma_window=50, futures_data=None):
         go.Scatter(
             x=turbulence.index, 
             y=turbulence, 
-            name="Market Turbulence",
+            name="Market Stress Index",
             fill='tozeroy',
             line=dict(color=config.COLOR_ACCENT_RED, width=1.5),
             opacity=0.8
@@ -200,8 +200,8 @@ def plot_divergence_chart(prices, turbulence, ma_window=50, futures_data=None):
         legend=dict(orientation="h", y=1.02, x=0.5, xanchor="center")
     )
     
-    # Left Axis: Turbulence
-    fig.update_yaxes(title_text="Market Turbulence", secondary_y=False, showgrid=True, gridcolor="#333", range=[0, 650])
+    # Left Axis: Stress Index
+    fig.update_yaxes(title_text="Market Stress Index", secondary_y=False, showgrid=True, gridcolor="#333", range=[0, 650])
     # Right Axis: Price
     fig.update_yaxes(title_text="SPX Level", secondary_y=True, showgrid=False)
     

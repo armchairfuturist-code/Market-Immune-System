@@ -37,12 +37,6 @@ start_date = st.sidebar.date_input("Data Start Date", default_start, max_value=t
 # Catalyst Watch (Earnings & Macro)
 st.sidebar.markdown("### 📅 Catalyst Watch")
 
-if st.sidebar.button("Refresh Data"):
-    st.cache_data.clear()
-
-st.sidebar.markdown("---")
-st.sidebar.info("v3.0 | Zero-Trust Engine")
-
 # 4. Data Loading
 @st.cache_data(ttl=3600)
 def get_market_data(start_date):
@@ -68,9 +62,34 @@ def get_macro_data():
     econ_calendar = macro.fetch_economic_calendar()
     return yield_curve, credit_spreads, sentiment, econ_calendar
 
-with st.spinner("Initializing Zero-Trust Data Engine (The 99)..."):
-    market_close, market_vol, earnings_df, futures_df = get_market_data(start_date)
-    macro_yield, macro_credit, macro_sentiment, econ_df = get_macro_data()
+st.sidebar.markdown("---")
+st.sidebar.info("v3.0 | Zero-Trust Engine")
+
+# 4. Data Loading & State Management
+if 'data' not in st.session_state or st.sidebar.button("Forced Reload"):
+    with st.spinner("Initializing Zero-Trust Data Engine (The 99)..."):
+        market_close, market_vol, earnings_df, futures_df = get_market_data(start_date)
+        macro_yield, macro_credit, macro_sentiment, econ_df = get_macro_data()
+        
+        st.session_state.data = {
+            'market_close': market_close,
+            'market_vol': market_vol,
+            'earnings_df': earnings_df,
+            'futures_df': futures_df,
+            'macro_yield': macro_yield,
+            'macro_credit': macro_credit,
+            'macro_sentiment': macro_sentiment,
+            'econ_df': econ_df
+        }
+else:
+    market_close = st.session_state.data['market_close']
+    market_vol = st.session_state.data['market_vol']
+    earnings_df = st.session_state.data['earnings_df']
+    futures_df = st.session_state.data['futures_df']
+    macro_yield = st.session_state.data['macro_yield']
+    macro_credit = st.session_state.data['macro_credit']
+    macro_sentiment = st.session_state.data['macro_sentiment']
+    econ_df = st.session_state.data['econ_df']
 
 if market_close.empty:
     st.error("Failed to fetch market data. Please check connection.")
@@ -172,17 +191,7 @@ else:
 regime = math_engine.get_market_regime(last_turb, last_abs, trend)
 crypto_stress_signal = (last_crypto_z > 2.0) and spy_flat
 super_signal = math_engine.generate_super_signal(last_amihud, last_hurst, curr_close["SPY"])
-
-# 6. UI Layout
-
-# Time Context
-last_date = curr_turb.index[-1]
-day_name = last_date.strftime("%A")
-is_weekend = day_name in ["Saturday", "Sunday"]
-
-st.sidebar.markdown(f"**Data Horizon:** {last_date.date()} ({day_name})")
-
-# Generate Report
+# 6. Report & Context Generation
 vix_val = curr_close["^VIX"].iloc[-1] if "^VIX" in curr_close.columns else 0.0
 is_divergence = (last_turb > 180) and (trend == "UP")
 
@@ -193,6 +202,11 @@ if not curr_turb.empty:
         for x in elevated_mask[::-1]:
             if x: days_elevated += 1
             else: break
+
+# Time Context
+last_date = curr_turb.index[-1]
+day_name = last_date.strftime("%A")
+is_weekend = day_name in ["Saturday", "Sunday"]
 
 status_report = report_generator.generate_immune_report(
     date=last_date.date(),
@@ -207,10 +221,26 @@ status_report = report_generator.generate_immune_report(
     days_elevated=days_elevated
 )
 
+playbook = cycle_playbook.get_cycle_playbook(current_cycle)
+
+# 7. UI Layout
+
+# Tactical Stance Banner (The "Action" Banner)
+st.markdown("### 🎯 Tactical Stance")
+stance_msg = f"TACTICAL STANCE: {status_report['warning_level']}. {playbook['layman_strategy']}"
+if status_report['badge_color'] == 'green':
+    st.success(f"**{stance_msg}**")
+elif status_report['badge_color'] == 'yellow':
+    st.warning(f"**{stance_msg}**")
+else:
+    st.error(f"**{stance_msg}**")
+
+st.sidebar.markdown(f"**Data Horizon:** {last_date.date()} ({day_name})")
+
 # Display Report
 with st.container(border=True):
     c_head1, c_head2 = st.columns([3, 1])
-    c_head1.subheader(f"🛡️ IMMUNE SYSTEM STATUS: {status_report['warning_level']}")
+    c_head1.subheader(f"🛡️ Market Stress Index: {status_report['warning_level']}")
     if status_report['badge_color'] == 'green':
         c_head2.success("System Healthy")
     elif status_report['badge_color'] == 'yellow':
@@ -257,8 +287,8 @@ with st.expander("⚡ Advanced Quant Signals", expanded=False):
             # 1. Signal Breakdown
             st.markdown("**1. Signal Breakdown**")
             c1, c2, c3 = st.columns(3)
-            c1.metric("Liquidity (Driver)", f"{last_amihud:.1f}σ", "Stress" if last_amihud > 1 else "Flowing", delta_color="inverse")
-            c2.metric("Structure (Hurst)", f"{last_hurst:.2f}", "Fragile" if last_hurst > 0.65 else "Robust", delta_color="inverse")
+            c1.metric("Exit Door Size", f"{last_amihud:.1f}σ", "Wide Open" if last_amihud < 0 else "Stress", delta_color="inverse", help="Negative = Wide open. Easy to sell.")
+            c2.metric("Trend Quality", f"{last_hurst:.2f}", "Crowded" if last_hurst > 0.65 else "Robust", delta_color="inverse", help="0.78 = Crowded. Too many people are on one side of the boat.")
             c3.metric("Momentum (RSI)", f"{last_rsi:.0f}", "Overbought" if last_rsi > 70 else "Oversold" if last_rsi < 30 else "Neutral", delta_color="inverse")
             
             # 2. Weighting
@@ -297,10 +327,7 @@ if not macro_ratios_df.empty:
                 }
                 st.markdown(f"**{row['Pair']} ({row['Trend']})**")
 st.markdown("---")
-
-# Cycle Playbook
-playbook = cycle_playbook.get_cycle_playbook(current_cycle)
-
+# Playbook Details
 st.markdown(f"### 📘 Playbook: {playbook['title']}")
 with st.container(border=True):
     cp1, cp2, cp3 = st.columns([2, 1, 1])
@@ -327,28 +354,28 @@ st.markdown("---")
 turb_delta = "Weekend Mode" if is_weekend else "Low Vol" if last_turb < 50 else "Active"
 
 # Dynamic Interpretations
-# 1. Turbulence
+# 1. Market Stress Index
 turb_interp = "Calm/Normal"
 if last_turb > 180: turb_interp = "Elevated Stress"
 if last_turb > 370: turb_interp = "CRITICAL Instability"
-turb_help = f"""**Definition:** Measures how 'weird' or unusual today's price moves are compared to the last year.\n\n**Significance:** High turbulence often precedes crashes. It detects hidden stress before price drops.\n\n**Current Status:** {last_turb:.0f} -> {turb_interp}."""
+turb_help = f"""**Definition:** Measures how 'weird' or unusual today's price moves are compared to the last year.\n\n**Significance:** High stress often precedes crashes. It detects hidden stress before price drops.\n\n**Current Status:** {last_turb:.0f} -> {turb_interp}."""
 
-# 2. Fragility (Absorption)
+# 2. Contagion Risk
 abs_interp = "Resilient (Diverse)"
 if last_abs > 0.80: abs_interp = "Highly Fragile (Unified)"
-abs_help = f"""**Definition:** The % of assets moving in lockstep.\n\n**Significance:** When everything moves together (>80%), diversification fails. A crash in one asset drags down everything.\n\n**Current Status:** {last_abs:.0%}: -> {abs_interp}."""
+abs_help = f"""**Definition:** The % of assets moving in lockstep.\n\n**Significance:** 94% of stocks are moving in lockstep; if one trips, they all fall.\n\n**Current Status:** {last_abs:.0%}: -> {abs_interp}."""
 
-# 3. Hurst
+# 3. Trend Quality
 hurst_interp = "Random Walk (Healthy)"
 if last_hurst > 0.65: hurst_interp = "Trending"
 if last_hurst > 0.75: hurst_interp = "Crowded/Brittle Trend"
-hurst_help = f"""**Definition:** Measures how 'persistent' a trend is.\n\n**Significance:** High scores (>0.75) mean everyone is on the same side of the trade. If they rush for the exit, price collapses.\n\n**Current Status:** {last_hurst:.2f} -> {hurst_interp}."""
+hurst_help = f"""**Definition:** Measures how 'persistent' a trend is.\n\n**Significance:** 0.78 = Crowded. Too many people are on one side of the boat.\n\n**Current Status:** {last_hurst:.2f} -> {hurst_interp}."""
 
-# 4. Liquidity (Amihud)
+# 4. Exit Door Size
 liq_interp = "Normal Liquidity"
 if last_amihud > 1.0: liq_interp = "Thin Liquidity"
 if last_amihud > 2.0: liq_interp = "Liquidity Hole (Danger)"
-liq_help = f"""**Definition:** How much price moves per dollar traded.\n\n**Significance:** 'Liquidity Holes' mean small sell orders cause huge price drops. Essential for crash detection.\n\n**Current Status:** {last_amihud:.1f}σ -> {liq_interp}."""
+liq_help = f"""**Definition:** How much price moves per dollar traded.\n\n**Significance:** Negative = Wide open. Easy to sell.\n\n**Current Status:** {last_amihud:.1f}σ -> {liq_interp}."""
 
 # 5. Sentiment
 sent_interp = "Neutral"
@@ -367,14 +394,19 @@ crypto_interp = "Normal"
 if crypto_ratio > 1.5: crypto_interp = "Speculative Excess"
 crypto_help = f"""**Definition:** Volatility of Crypto relative to the broad market.\n\n**Significance:** Often a leading indicator for risk appetite. If Crypto cracks, stocks often follow.\n\n**Current Status:** {crypto_ratio:.1f}x -> {crypto_interp}."""
 
-m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
-m1.metric("Turbulence", f"{last_turb:.0f}", delta=turb_delta, delta_color="off", help=turb_help)
-m2.metric("Fragility", f"{last_abs*100:.0f}%", help=abs_help)
-m3.metric("Hurst", f"{last_hurst:.2f}", help=hurst_help)
-m4.metric("Liquidity", f"{last_amihud:.1f}", help=liq_help)
-m5.metric("Sentiment", f"{macro_sentiment:.0f}", help=sent_help)
-m6.metric("AI/Mkt Ratio", f"{ai_ratio:.1f}x", help=ai_help)
-m7.metric("Crypto/Mkt", f"{crypto_ratio:.1f}x", help=crypto_help)
+# Gauges
+gauge_cols = st.columns(2)
+with gauge_cols[0]:
+    st.plotly_chart(charts.create_gauge_chart(last_turb, "Market Stress Index", 0, 1000, {180: "orange", 370: "red"}), use_container_width=True)
+with gauge_cols[1]:
+    st.plotly_chart(charts.create_gauge_chart(last_abs * 100, "Contagion Risk (%)", 0, 100, {60: "orange", 80: "red"}), use_container_width=True)
+
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.metric("Trend Quality", f"{last_hurst:.2f}", help=hurst_help, delta_color="inverse")
+m2.metric("Exit Door Size", f"{last_amihud:.1f}", help=liq_help, delta_color="inverse")
+m3.metric("Sentiment", f"{macro_sentiment:.0f}", help=sent_help)
+m4.metric("AI/Mkt Ratio", f"{ai_ratio:.1f}x", help=ai_help)
+m5.metric("Crypto/Mkt", f"{crypto_ratio:.1f}x", help=crypto_help)
 
 # Macro Row
 st.markdown("#### 🌍 Macro Truth")

@@ -78,7 +78,7 @@ def generate_immune_report(
     trend_desc = "supporting the rally" if spx_status == "ABOVE" else "fighting the trend"
     div_text = "However, a divergence signal warns of a potential trap." if is_divergence else "Internal structure confirms price action."
     
-    core_narrative = f"The market is currently {stress_desc} (Turbulence {turbulence_score:.0f}), with price {trend_desc}. {div_text} Volatility remains {'contained' if vix_value < 20 else 'high'} at {vix_value:.1f}."
+    core_narrative = f"The market is currently {stress_desc} (Stress Index {turbulence_score:.0f}), with price {trend_desc}. {div_text} Volatility remains {'contained' if vix_value < 20 else 'high'} at {vix_value:.1f}."
 
     # Context Narrative
     fragility_desc = "highly fragile" if absorption_ratio > 0.8 else "showing contagion risk" if absorption_ratio > 0.75 else "resilient"
@@ -93,7 +93,7 @@ def generate_immune_report(
     elif warning_level == "DIVERGENCE DETECTED":
         s1 = "We are detecting a **hidden warning sign**. While stock prices are rising, the internal pressure (turbulence) is building up, which often happens before a surprise drop."
     else: # Elevated/Critical
-        s1 = f"The market is currently **unstable** (Turbulence {turbulence_score:.0f}). Prices are moving erratically, which is a classic signal of increased risk."
+        s1 = f"The market is currently **unstable** (Stress Index {turbulence_score:.0f}). Prices are moving erratically, which is a classic signal of increased risk."
 
     # 2. Structure (Fragility)
     if absorption_ratio > 0.8:
@@ -129,7 +129,7 @@ def generate_immune_report(
         "core_narrative": core_narrative,
         "context_narrative": context_narrative,
         "core_metrics": {
-            "Market Turbulence": f"{turbulence_score:.1f}",
+            "Market Stress Index": f"{turbulence_score:.1f}",
             "Days Elevated": days_elevated,
             "SPX Level": f"{spx_price:.2f} ({spx_status} MA)",
             "VIX Level": f"{vix_value:.2f}",

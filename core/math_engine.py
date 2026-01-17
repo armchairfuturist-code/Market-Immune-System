@@ -3,7 +3,9 @@ import pandas as pd
 from sklearn.decomposition import PCA
 from scipy.linalg import solve
 import config
+import streamlit as st
 
+@st.cache_data
 def calculate_turbulence(prices_df, lookback=365):
     """
     Calculates the Statistical Turbulence (Mahalanobis Distance) of the asset universe.
@@ -93,6 +95,7 @@ def calculate_turbulence(prices_df, lookback=365):
     # Floor at 15 to prevent zero-readings and improve signal-to-noise
     return scaled_score.clip(15, 1000)
 
+@st.cache_data
 def calculate_absorption_ratio(prices_df, window=60):
     """
     Calculates the Absorption Ratio (Systemic Fragility).
