@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 import config
-from core import data_loader, math_engine, macro_connector, cycle_engine, report_generator
+from core import data_loader, math_engine, macro_connector, cycle_engine, report_generator, cycle_playbook
 from ui import charts
 import yfinance as yf
 
@@ -268,7 +268,30 @@ if not macro_ratios_df.empty:
                     "CPER/GLD": "Reflationary Growth (Dr. Copper)" if row['Trend'] == "Rising" else "Inflation/Fear Hedge (Gold)"
                 }
                 st.markdown(f"**{row['Pair']} ({row['Trend']})**")
-                st.markdown(f"*{interpretations.get(row['Pair'], row['Label'])}*")
+st.markdown("---")
+
+# Cycle Playbook
+playbook = cycle_playbook.get_cycle_playbook(current_cycle)
+
+st.markdown(f"### 📘 Playbook: {playbook['title']}")
+with st.container(border=True):
+    cp1, cp2, cp3 = st.columns([2, 1, 1])
+    
+    with cp1:
+        st.markdown("#### 🧠 The Layman's Strategy")
+        st.info(playbook['layman_strategy'])
+        st.caption(f"**Context:** {playbook['context']}")
+        
+    with cp2:
+        st.markdown("#### 🎨 Style Rotation")
+        st.metric("Focus Style", playbook['style'])
+        
+    with cp3:
+        st.markdown("#### 🔄 Capital Rotation")
+        if playbook['capital_rotation']['Buy']:
+            st.success(f"**BUY:** {', '.join(playbook['capital_rotation']['Buy'])}")
+        if playbook['capital_rotation']['Sell/Avoid']:
+            st.error(f"**AVOID:** {', '.join(playbook['capital_rotation']['Sell/Avoid'])}")
 
 st.markdown("---")
 
