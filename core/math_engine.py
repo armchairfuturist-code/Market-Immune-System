@@ -15,6 +15,11 @@ def calculate_turbulence(prices_df, lookback=365):
     # Drop assets with > 30% missing data to prevent row-killing
     missing_frac = prices_df.isna().mean()
     keep_cols = missing_frac[missing_frac < 0.3].index
+    
+    # 1a. Robustness Check: If no assets remain, return baseline
+    if len(keep_cols) == 0:
+        return pd.Series(15.0, index=prices_df.index)
+        
     prices_df = prices_df[keep_cols]
     
     # Forward Fill to handle weekends/holidays differences
@@ -104,6 +109,11 @@ def calculate_absorption_ratio(prices_df, window=60):
     # 1. Data Sanitization
     missing_frac = prices_df.isna().mean()
     keep_cols = missing_frac[missing_frac < 0.3].index
+    
+    # Robustness Check
+    if len(keep_cols) < 2:
+        return pd.Series(np.nan, index=prices_df.index)
+        
     prices_df = prices_df[keep_cols]
     
     prices_df = prices_df.ffill()

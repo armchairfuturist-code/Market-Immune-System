@@ -17,7 +17,7 @@ BROAD_ASSETS = [
     "SPY", "QQQ", "DIA", "IWM", "VXX", "TLT", "IEF", "SHY", "LQD", "HYG", 
     "BND", "AGG", "GLD", "SLV", "CPER", "USO", "UNG", "DBC", "PALL", "UUP", 
     "FXE", "FXY", "FXB", "CYB", "XLF", "XLE", "XLK", "XLY", "XLI", "XLB", 
-    "XLRE", "XLP", "EEM", "^VIX", "^TNX", "VTV", "VUG" 
+    "XLRE", "XLP", "EEM", "^VIX", "^TNX", "VTV", "VUG", "EURUSD=X"
     # Removed ^VIX3M, ^IRX as they often cause YF issues or are indices with no volume
 ]
 

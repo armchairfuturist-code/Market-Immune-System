@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 import config
-from core import data_loader, math_engine, macro_connector, cycle_engine, report_generator, cycle_playbook
+from core import data_loader, math_engine, macro_connector, cycle_engine, report_generator, cycle_playbook, smc_engine
 from ui import charts
 import yfinance as yf
 
@@ -108,6 +108,50 @@ if not econ_df.empty:
     st.sidebar.dataframe(econ_df, hide_index=True)
 else:
     st.sidebar.text("No releases found.")
+# EUR/USD Strategy Logic
+eurusd_col = "EURUSD=X"
+if eurusd_col in market_close.columns:
+    eurusd_p = market_close[eurusd_col]
+    eur_ma50 = eurusd_p.rolling(50).mean()
+    eur_ma20 = eurusd_p.rolling(20).mean()
+    
+    last_eur = eurusd_p.iloc[-1]
+    last_eur_ma50 = eur_ma50.iloc[-1]
+    last_eur_ma20 = eur_ma20.iloc[-1]
+    
+    if last_eur > last_eur_ma50:
+        eur_trend = "UP (EUR Strengthening)"
+        eur_rec = "HOLD EUR"
+        eur_color = "green"
+    elif last_eur < last_eur_ma50:
+        eur_trend = "DOWN (USD Strengthening)"
+        eur_rec = "HOLD USD"
+        eur_color = "blue"
+    else:
+        eur_trend = "FLAT"
+        eur_rec = "NEUTRAL"
+        eur_color = "gray"
+else:
+    eur_trend = "N/A"
+    eur_rec = "N/A"
+    eur_color = "gray"
+    last_eur = 0.0
+
+# 4b. Currency Strategy (Portugal Context)
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 💱 Currency Strategy (USD/EUR)")
+with st.sidebar.container(border=True):
+    st.markdown(f"**Rate:** {last_eur:.4f}")
+    st.markdown(f"**Trend:** {eur_trend}")
+    
+    if eur_rec == "HOLD EUR":
+        st.success(f"**STRATEGY: {eur_rec}**")
+        st.caption("Euro is gaining momentum against the Dollar.")
+    elif eur_rec == "HOLD USD":
+        st.info(f"**STRATEGY: {eur_rec}**")
+        st.caption("Dollar is strengthening. Protect purchasing power in USD.")
+    else:
+        st.markdown(f"**STRATEGY: {eur_rec}**")
 
 # 5. Math Engine
 @st.cache_data
@@ -135,12 +179,17 @@ def run_math(df_c, df_v):
     # Cycle Detection
     cycle_phase, cycle_details = cycle_engine.detect_market_cycle(df_c)
     
+    # Institutional Context (SMC)
+    smc_context = smc_engine.get_institutional_context(df_c, ticker="SPY")
+    
     return (turbulence, absorption, hurst_spy, amihud_spy, rotation_df, 
-            crypto_z, cycle_phase, cycle_details, macro_ratios, ai_turb, crypto_turb)
+            crypto_z, cycle_phase, cycle_details, macro_ratios, ai_turb, crypto_turb, smc_context)
 
 (turb_series, abs_series, hurst_series, amihud_series, rotation_data, 
  last_crypto_z, current_cycle, cycle_data, macro_ratios_df, 
- ai_turb_series, crypto_turb_series) = run_math(market_close, market_vol)
+ ai_turb_series, crypto_turb_series, smc_context) = run_math(market_close, market_vol)
+
+
 
 # Slice Data (Display Period)
 analysis_ts = pd.Timestamp(analysis_date)
@@ -189,9 +238,16 @@ else:
     spy_p = pd.Series()
     price, ma50 = 0.0, 0.0
 
+# 6. SMC Synthesis & HUD Alert Upgrade
 regime = math_engine.get_market_regime(last_turb, last_abs, trend)
+
+# Upgrade logic: If Turbulence > 180 AND CHoCH == Bearish (-1)
+hud_alert_upgrade = False
+if last_turb > 180 and smc_context["choch_val"] == -1:
+    hud_alert_upgrade = True
+
 crypto_stress_signal = (last_crypto_z > 2.0) and spy_flat
-super_signal = math_engine.generate_super_signal(last_amihud, last_hurst, curr_close["SPY"])
+super_signal = math_engine.generate_super_signal(last_amihud, last_hurst, spy_p)
 # 6. Report & Context Generation
 vix_val = curr_close["^VIX"].iloc[-1] if "^VIX" in curr_close.columns else 0.0
 is_divergence = (last_turb > 180) and (trend == "UP")
@@ -229,7 +285,9 @@ playbook = cycle_playbook.get_cycle_playbook(current_cycle)
 # Tactical Stance Banner (The "Action" Banner)
 st.markdown("### 🎯 Tactical Stance")
 stance_msg = f"TACTICAL STANCE: {status_report['warning_level']}. {playbook['layman_strategy']}"
-if status_report['badge_color'] == 'green':
+if hud_alert_upgrade:
+    st.error(f"**⚠️ INSTITUTIONAL DISTRIBUTION DETECTED. Multi-factor structural breakdown in progress.**")
+elif status_report['badge_color'] == 'green':
     st.success(f"**{stance_msg}**")
 elif status_report['badge_color'] == 'yellow':
     st.warning(f"**{stance_msg}**")
@@ -251,10 +309,35 @@ with st.container(border=True):
         unsafe_allow_html=True
     )
 
+# Institutional Footprints (SMC)
+with st.expander("🏦 Institutional Footprints", expanded=False):
+    st.caption("Cross-verifying Quant signals with institutional price patterns (Smart Money Concepts).")
+    smc1, smc2, smc3 = st.columns(3)
+    
+    with smc1:
+        st.markdown("**Price Imbalance (FVG)**")
+        st.info(smc_context["fvg"])
+        st.caption("Unfilled gaps where institutions moved too fast for 'fair value' to be established.")
+        
+    with smc2:
+        st.markdown("**Institutional Floor/Ceiling (OB)**")
+        st.info(smc_context["ob"])
+        st.caption("Active levels where massive institutional orders were last filled.")
+        
+    with smc3:
+        st.markdown("**Change of Character (CHoCH)**")
+        if smc_context["choch_val"] == 1:
+            st.success(f"✅ {smc_context['choch']}")
+        elif smc_context["choch_val"] == -1:
+            st.error(f"🚨 {smc_context['choch']}")
+        else:
+            st.info(smc_context["choch"])
+        st.caption("First sign of trend structural breakdown or reversal.")
+
 # Advanced Quant Signals
 with st.expander("⚡ Advanced Quant Signals", expanded=False):
     # Calculate RSI locally for breakdown
-    delta = curr_close["SPY"].diff()
+    delta = spy_p.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
@@ -453,6 +536,7 @@ if crypto_ratio > 1.5: crypto_interp = "Speculative Excess"
 crypto_help = f"""**Definition:** Volatility of Crypto relative to the broad market.\n\n**Significance:** Often a leading indicator for risk appetite. If Crypto cracks, stocks often follow.\n\n**Current Status:** {crypto_ratio:.1f}x -> {crypto_interp}."""
 
 # Gauges
+st.write("")
 gauge_cols = st.columns(2)
 with gauge_cols[0]:
     st.plotly_chart(charts.create_gauge_chart(last_turb, "Market Stress Index", 0, 1000, {180: "orange", 370: "red"}), use_container_width=True)

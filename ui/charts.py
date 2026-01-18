@@ -50,8 +50,8 @@ def create_gauge_chart(value, title, min_val, max_val, thresholds, inverse=False
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font={'color': "white", 'family': "Inter"},
-        height=150,
-        margin=dict(l=20, r=20, t=30, b=20)
+        height=180,
+        margin=dict(l=20, r=20, t=50, b=20)
     )
     
     return fig
