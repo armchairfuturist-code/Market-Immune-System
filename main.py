@@ -240,14 +240,7 @@ st.sidebar.markdown(f"**Data Horizon:** {last_date.date()} ({day_name})")
 
 # Display Report
 with st.container(border=True):
-    c_head1, c_head2 = st.columns([3, 1])
-    c_head1.subheader(f"🛡️ Market Stress Index: {status_report['warning_level']}")
-    if status_report['badge_color'] == 'green':
-        c_head2.success("System Healthy")
-    elif status_report['badge_color'] == 'yellow':
-        c_head2.warning("System Elevated")
-    else:
-        c_head2.error("System Critical")
+    st.subheader(f"🛡️ Market Stress Index: {status_report['warning_level']}")
     
     # Executive Summary (Consolidated Narrative)
     st.markdown("#### 📝 Executive Summary")
@@ -306,94 +299,94 @@ with st.expander("⚡ Advanced Quant Signals", expanded=False):
                 st.info("⏸️ **Wait:** Market structure is stable. Trade the trend, but verify setup.")
 
 # Institutional Macro Ratios
-st.markdown("### 🏛️ Institutional Macro Ratios")
-st.caption("Strategic recommendations based on relative asset flows (20-day trend).")
-
-if not macro_ratios_df.empty:
-    # Pre-map labels and logic
-    macro_map = {
-        "SPY/TLT": {
-            "label": "Stocks vs Bonds", 
-            "left": "Bonds (Safe)", 
-            "right": "Stocks (Growth)", 
-            "flip": False, 
-            "desc": "When this rises, investors prefer profits over the safety of government debt.",
-            "safety_if": "Falling"
-        },
-        "XLY/XLP": {
-            "label": "Wants vs Needs", 
-            "left": "Needs (XLP)", 
-            "right": "Wants (XLY)", 
-            "flip": False, 
-            "desc": "Compares luxury spending (Discretionary) to essential spending (Staples). If falling, it suggests the average person is feeling the pinch.",
-            "safety_if": "Falling"
-        },
-        "GLD/SPY": {
-            "label": "Gold vs Stocks", 
-            "left": "Gold (Fear)", 
-            "right": "Stocks (Growth)", 
-            "flip": True, 
-            "desc": "When this rises, the 'Smart Money' is buying insurance (Gold) because they don't trust the stock market rally.",
-            "safety_if": "Rising"
-        },
-        "EEM/SPY": {
-            "label": "World vs USA", 
-            "left": "USA (SPY)", 
-            "right": "World (EEM)", 
-            "flip": False, 
-            "desc": "Rising means money is flowing into high-risk global markets. Falling means money is 'Hiding in the US Dollar.'",
-            "safety_if": "Falling"
-        },
-        "CPER/GLD": {
-            "label": "Industrial vs Safety", 
-            "left": "Safety (Gold)", 
-            "right": "Industrial (CPER)", 
-            "flip": False, 
-            "desc": "Copper is used to build things; Gold is used to hide wealth. Rising means the actual global economy is expanding.",
-            "safety_if": "Falling"
+with st.expander("🏛️ Institutional Macro Ratios", expanded=False):
+    st.caption("Strategic recommendations based on relative asset flows (20-day trend).")
+    
+    if not macro_ratios_df.empty:
+        # Pre-map labels and logic
+        macro_map = {
+            "SPY/TLT": {
+                "label": "Stocks vs Bonds", 
+                "left": "Bonds (Safe)", 
+                "right": "Stocks (Growth)", 
+                "flip": False, 
+                "desc": "When this rises, investors prefer profits over the safety of government debt.",
+                "safety_if": "Falling"
+            },
+            "XLY/XLP": {
+                "label": "Wants vs Needs", 
+                "left": "Needs (XLP)", 
+                "right": "Wants (XLY)", 
+                "flip": False, 
+                "desc": "Compares luxury spending (Discretionary) to essential spending (Staples). If falling, it suggests the average person is feeling the pinch.",
+                "safety_if": "Falling"
+            },
+            "GLD/SPY": {
+                "label": "Gold vs Stocks", 
+                "left": "Gold (Fear)", 
+                "right": "Stocks (Growth)", 
+                "flip": True, 
+                "desc": "When this rises, the 'Smart Money' is buying insurance (Gold) because they don't trust the stock market rally.",
+                "safety_if": "Rising"
+            },
+            "EEM/SPY": {
+                "label": "World vs USA", 
+                "left": "USA (SPY)", 
+                "right": "World (EEM)", 
+                "flip": False, 
+                "desc": "Rising means money is flowing into high-risk global markets. Falling means money is 'Hiding in the US Dollar.'",
+                "safety_if": "Falling"
+            },
+            "CPER/GLD": {
+                "label": "Industrial vs Safety", 
+                "left": "Safety (Gold)", 
+                "right": "Industrial (CPER)", 
+                "flip": False, 
+                "desc": "Copper is used to build things; Gold is used to hide wealth. Rising means the actual global economy is expanding.",
+                "safety_if": "Falling"
+            }
         }
-    }
-    
-    safety_count = 0
-    for i, row in macro_ratios_df.iterrows():
-        pair = row['Pair']
-        if pair in macro_map and row['Trend'] == macro_map[pair]['safety_if']:
-            safety_count += 1
-            
-    if safety_count >= 3:
-        st.warning("⚠️ **UNDERLYING CAUTION:** Macro indicators are moving toward defensive positions.")
-    
-    cols = st.columns(2)
-    for i, (idx, row) in enumerate(macro_ratios_df.iterrows()):
-        pair = row['Pair']
-        if pair not in macro_map: continue
         
-        m_info = macro_map[pair]
-        col_idx = i % 2
-        with cols[col_idx]:
-            with st.container(border=True):
-                st.markdown(f"**{m_info['label']}**", help=m_info['desc'])
+        safety_count = 0
+        for i, row in macro_ratios_df.iterrows():
+            pair = row['Pair']
+            if pair in macro_map and row['Trend'] == macro_map[pair]['safety_if']:
+                safety_count += 1
                 
-                # Tug of War Logic
-                z = row.get('Z-Score', 0.0)
-                # Map -2 to +2 Z-score to 0-100 range
-                prog_val = 50 + (z * 25)
-                if m_info['flip']:
-                    prog_val = 100 - prog_val
-                prog_val = max(0, min(100, int(prog_val)))
-                
-                # Custom Tug-of-War Bar using Progress
-                t_cols = st.columns([1, 4, 1])
-                t_cols[0].markdown(f"<div style='text-align: right; color: #888; font-size: 0.8rem;'>{m_info['left']}</div>", unsafe_allow_html=True)
-                t_cols[1].progress(prog_val)
-                t_cols[2].markdown(f"<div style='text-align: left; color: #888; font-size: 0.8rem;'>{m_info['right']}</div>", unsafe_allow_html=True)
-                
-                # Winner Logic
-                trend = row['Trend']
-                if trend == "Rising":
-                    st.markdown(f"<div style='text-align: center; color: #00C853; font-weight: bold;'>Winner: GROWTH</div>", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"<div style='text-align: center; color: #FFAB00; font-weight: bold;'>Winner: SAFETY</div>", unsafe_allow_html=True)
+        if safety_count >= 3:
+            st.warning("⚠️ **UNDERLYING CAUTION:** Macro indicators are moving toward defensive positions.")
+        
+        cols = st.columns(2)
+        for i, (idx, row) in enumerate(macro_ratios_df.iterrows()):
+            pair = row['Pair']
+            if pair not in macro_map: continue
+            
+            m_info = macro_map[pair]
+            col_idx = i % 2
+            with cols[col_idx]:
+                with st.container(border=True):
+                    st.markdown(f"**{m_info['label']}**", help=m_info['desc'])
+                    
+                    # Tug of War Logic
+                    z = row.get('Z-Score', 0.0)
+                    # Map -2 to +2 Z-score to 0-100 range
+                    prog_val = 50 + (z * 25)
+                    if m_info['flip']:
+                        prog_val = 100 - prog_val
+                    prog_val = max(0, min(100, int(prog_val)))
+                    
+                    # Custom Tug-of-War Bar using Progress
+                    t_cols = st.columns([1, 4, 1])
+                    t_cols[0].markdown(f"<div style='text-align: right; color: #888; font-size: 0.8rem;'>{m_info['left']}</div>", unsafe_allow_html=True)
+                    t_cols[1].progress(prog_val)
+                    t_cols[2].markdown(f"<div style='text-align: left; color: #888; font-size: 0.8rem;'>{m_info['right']}</div>", unsafe_allow_html=True)
+                    
+                    # Winner Logic
+                    trend = row['Trend']
+                    if trend == "Rising":
+                        st.markdown(f"<div style='text-align: center; color: #00C853; font-weight: bold;'>Winner: GROWTH</div>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"<div style='text-align: center; color: #FFAB00; font-weight: bold;'>Winner: SAFETY</div>", unsafe_allow_html=True)
 
 st.markdown(f"### 📘 Playbook: {playbook['title']}")
 with st.container(border=True):
