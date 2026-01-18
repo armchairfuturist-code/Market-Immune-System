@@ -1,14 +1,21 @@
 import os
 
-# API Keys
-try:
-    import streamlit as st
-    # Try secrets, then env, then fallback (for now, to keep app running)
-    if "FRED_API_KEY" in st.secrets:
-        FRED_API_KEY = st.secrets["FRED_API_KEY"]
-    else:
-        FRED_API_KEY = os.environ.get("FRED_API_KEY", "fc2e25e796936565703717197b34efa8")
-except ImportError:
+import streamlit as st
+
+# This checks environment variables (Cloud Run) AND st.secrets (Local)
+FRED_API_KEY = os.environ.get("FRED_API_KEY")
+
+# Check Streamlit secrets as a fallback or primary for local
+if not FRED_API_KEY:
+    try:
+        FRED_API_KEY = st.secrets.get("FRED_API_KEY")
+    except:
+        pass
+
+if not FRED_API_KEY:
+    # Handle the error gracefully
+    st.error("FRED_API_KEY not found in Environment Variables or Secrets!")
+    # Provide a fallback for non-breaking initialization if needed, or keep it None
     FRED_API_KEY = os.environ.get("FRED_API_KEY", "fc2e25e796936565703717197b34efa8")
 
 # Asset Universe ("The 99")
