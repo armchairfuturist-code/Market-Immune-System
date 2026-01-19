@@ -110,7 +110,7 @@ def get_institutional_context(df_raw, ticker="SPY", hourly_df=None):
     """
     ohlc = pd.DataFrame()
     
-    # 1. Try Hourly Data (Pulse)
+    # 1. Try Hourly Data (Pulse) - This is now the primary data source
     if hourly_df is not None and not hourly_df.empty:
         # Check if ticker is in columns (MultiIndex usually)
         # hourly_df columns: (PriceType, Ticker)
@@ -120,11 +120,14 @@ def get_institutional_context(df_raw, ticker="SPY", hourly_df=None):
             idx = pd.IndexSlice
             if ticker in hourly_df.columns.get_level_values(1):
                 ohlc = hourly_df.xs(ticker, axis=1, level=1).copy()
-        except Exception:
+                print(f"Using hourly data for {ticker} with {len(ohlc)} rows")
+        except Exception as e:
+            print(f"Error extracting hourly data for {ticker}: {e}")
             pass
             
     # 2. Fallback to fresh fetch if hourly is missing
     if ohlc.empty:
+        print(f"No hourly data found for {ticker}, falling back to daily fetch")
         import yfinance as yf
         try:
             ohlc = yf.download(ticker, period="1y", progress=False, threads=False)

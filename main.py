@@ -45,13 +45,13 @@ def get_market_data(start_date):
         start_date = start_date.date()
     buffer_date = start_date - datetime.timedelta(days=365)
     
-    df_close, df_vol, hourly_df = data_loader.fetch_market_data(config.ASSET_UNIVERSE, start_date=buffer_date)
+    df_close, hourly_df = data_loader.fetch_market_data(config.ASSET_UNIVERSE, start_date=buffer_date)
     # Earnings (Fast changing)
     earnings = data_loader.fetch_next_earnings(config.GROWTH_ASSETS, limit=10)
     # Futures Trend
     futures = data_loader.fetch_futures_data(period="3mo")
     
-    return df_close, df_vol, earnings, futures, hourly_df
+    return df_close, earnings, futures, hourly_df
 
 @st.cache_data(ttl=86400) # 24h Cache for Macro
 def get_macro_data():
@@ -69,12 +69,11 @@ st.sidebar.info("v3.0 | Zero-Trust Engine")
 if 'data' not in st.session_state or st.sidebar.button("Forced Reload"):
     st.cache_data.clear()
     with st.spinner("Initializing Zero-Trust Data Engine (The 99)..."):
-        market_close, market_vol, earnings_df, futures_df, hourly_df = get_market_data(start_date)
+        market_close, earnings_df, futures_df, hourly_df = get_market_data(start_date)
         macro_yield, macro_credit, macro_sentiment, econ_df = get_macro_data()
         
         st.session_state.data = {
             'market_close': market_close,
-            'market_vol': market_vol,
             'earnings_df': earnings_df,
             'futures_df': futures_df,
             'hourly_df': hourly_df,
@@ -85,7 +84,6 @@ if 'data' not in st.session_state or st.sidebar.button("Forced Reload"):
         }
 else:
     market_close = st.session_state.data['market_close']
-    market_vol = st.session_state.data['market_vol']
     earnings_df = st.session_state.data['earnings_df']
     futures_df = st.session_state.data['futures_df']
     hourly_df = st.session_state.data.get('hourly_df', pd.DataFrame()) # Handle legacy state
@@ -157,13 +155,15 @@ with st.sidebar.container(border=True):
 
 # 5. Math Engine
 @st.cache_data
-def run_math(df_c, df_v, df_h):
+def run_math(df_c, df_h):
     turbulence = math_engine.calculate_turbulence(df_c)
     absorption = math_engine.calculate_absorption_ratio(df_c)
     
     if "SPY" in df_c.columns:
         hurst_spy = math_engine.calculate_hurst(df_c["SPY"])
-        amihud_spy = math_engine.calculate_amihud(df_c["SPY"], df_v["SPY"])
+        # Amihud calculation requires volume data, which we no longer have
+        # Using a placeholder or skipping for now
+        amihud_spy = pd.Series()
     else:
         hurst_spy = pd.Series()
         amihud_spy = pd.Series()
@@ -184,12 +184,12 @@ def run_math(df_c, df_v, df_h):
     # Institutional Context (SMC)
     smc_context = smc_engine.get_institutional_context(df_c, ticker="SPY", hourly_df=df_h)
     
-    return (turbulence, absorption, hurst_spy, amihud_spy, rotation_df, 
+    return (turbulence, absorption, hurst_spy, amihud_spy, rotation_df,
             crypto_z, cycle_phase, cycle_details, macro_ratios, ai_turb, crypto_turb, smc_context)
 
-(turb_series, abs_series, hurst_series, amihud_series, rotation_data, 
- last_crypto_z, current_cycle, cycle_data, macro_ratios_df, 
- ai_turb_series, crypto_turb_series, smc_context) = run_math(market_close, market_vol, hourly_df)
+(turb_series, abs_series, hurst_series, amihud_series, rotation_data,
+ last_crypto_z, current_cycle, cycle_data, macro_ratios_df,
+ ai_turb_series, crypto_turb_series, smc_context) = run_math(market_close, hourly_df)
 
 
 

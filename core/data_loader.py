@@ -11,6 +11,10 @@ def fetch_market_data(assets, period="2y", start_date=None):
     Fetches market data with 'Zero-Trust' fixes.
     1. Monday Fix: Handles 24/7 Crypto vs M-F Stocks.
     2. Today Fix: Appends live intraday data if missing.
+    
+    Returns:
+        df_close: Daily close prices for all assets (730 days baseline)
+        df_hourly: Hourly OHLC data for leaders (SPY, QQQ, NVDA, BTC-USD) - last 5 days
     """
     
     # Split assets into Crypto and Stocks for separate handling if needed, 
@@ -128,23 +132,22 @@ def fetch_market_data(assets, period="2y", start_date=None):
             except Exception as e:
                 print(f"Today fix failed: {e}")
                 
-    # Pulse Fetch (1-Hour Data for Dynamic SMC)
+    # Fetch Hourly Data for Leaders (SPY, QQQ, NVDA, BTC-USD)
+    # Last 5 days of 1-hour data for SMC engine
     hourly_data = pd.DataFrame()
     try:
-        pulse_assets = ["SPY", "QQQ", "NVDA", "BTC-USD"]
-        # Filter pulse assets that are in the requested assets list to avoid unnecessary calls if not needed, 
-        # but these are standard leaders so we force fetch them for the SMC engine.
-        print("Fetching 1-hour pulse data...")
-        hourly_data = yf.download(pulse_assets, period="5d", interval="1h", progress=False, group_by='column', threads=False)
-        # Handle MultiIndex if needed (yf > 0.2) - we usually want 'Close' for SMC
+        leader_assets = ["SPY", "QQQ", "NVDA", "BTC-USD"]
+        print("Fetching 1-hour data for leaders (last 5 days)...")
+        hourly_data = yf.download(leader_assets, period="5d", interval="1h", progress=False, group_by='column', threads=False)
+        
+        # Handle MultiIndex if needed (yf > 0.2)
         if isinstance(hourly_data.columns, pd.MultiIndex):
-            # Keep structure or simplify? SMC engine likely wants OHLC.
-            # Let's return the full OHLC dataframe for these assets.
+            # Keep the full OHLC structure for SMC engine
             pass
     except Exception as e:
         print(f"Hourly fetch failed: {e}")
             
-    return full_close, full_volume, hourly_data
+    return full_close, hourly_data
 
 def fetch_next_earnings(tickers, limit=10):
     """
