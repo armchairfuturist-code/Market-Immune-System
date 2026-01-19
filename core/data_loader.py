@@ -1,9 +1,11 @@
 import yfinance as yf
 import pandas as pd
 import datetime
+import streamlit as st
 from fredapi import Fred
 from config import FRED_API_KEY
 
+@st.cache_data(ttl=3600)
 def fetch_market_data(assets, period="2y", start_date=None):
     """
     Fetches market data with 'Zero-Trust' fixes.
@@ -128,6 +130,7 @@ def fetch_market_data(assets, period="2y", start_date=None):
             
     return full_close, full_volume
 
+@st.cache_data(ttl=3600)
 def fetch_next_earnings(tickers, limit=10):
     """
     Fetches next earnings dates for a list of tickers.
@@ -156,6 +159,7 @@ def fetch_next_earnings(tickers, limit=10):
         return pd.DataFrame(earnings_data).sort_values("Date")
     return pd.DataFrame(columns=["Ticker", "Date"])
 
+@st.cache_data(ttl=3600)
 def fetch_futures_data(period="1mo"):
     """
     Fetches S&P 500 Futures (ES=F) for trend projection.
@@ -170,6 +174,7 @@ def fetch_futures_data(period="1mo"):
         print(f"Futures fetch failed: {e}")
         return pd.Series()
 
+@st.cache_data(ttl=3600)
 def fetch_macro_data():
     """
     Fetches macro data from FRED.

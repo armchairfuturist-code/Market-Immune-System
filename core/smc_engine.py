@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import streamlit as st
 
 def calculate_fvg(ohlc):
     """
@@ -101,6 +102,7 @@ def calculate_order_blocks(ohlc, swing_df):
     
     return pd.Series(ob, index=ohlc.index) # Simplified placeholder for now
 
+@st.cache_data(ttl=3600)
 def get_institutional_context(df_raw, ticker="SPY"):
     """
     Synthesizes SMC signals for a specific ticker.

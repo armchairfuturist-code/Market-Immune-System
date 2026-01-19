@@ -1,6 +1,7 @@
 import pandas as pd
 import requests
 import datetime
+import streamlit as st
 from fredapi import Fred
 import config
 from finvizfinance.news import News
@@ -10,6 +11,7 @@ class MacroConnector:
         self.fred = Fred(api_key=config.FRED_API_KEY)
         self.api_key = config.FRED_API_KEY
         
+    @st.cache_data(ttl=3600)
     def fetch_economic_calendar(self):
         """
         Fetches next release dates for key economic indicators using raw FRED API.
@@ -49,6 +51,7 @@ class MacroConnector:
             return pd.DataFrame(calendar_data).sort_values("Date")
         return pd.DataFrame(columns=["Event", "Date"])
 
+    @st.cache_data(ttl=3600)
     def fetch_yield_curve(self):
         """
         Fetches 10Y-2Y Treasury Yield Spread.
@@ -60,6 +63,7 @@ class MacroConnector:
             print(f"FRED Yield Curve Error: {e}")
             return pd.Series()
             
+    @st.cache_data(ttl=3600)
     def fetch_credit_spreads(self):
         """
         Fetches ICE BofA US High Yield Index Option-Adjusted Spread.
@@ -83,6 +87,7 @@ class MacroConnector:
             print(f"FRED Credit Spread Error: {e}")
             return pd.Series()
             
+    @st.cache_data(ttl=3600)
     def fetch_sentiment(self):
         """
         Fetches general market sentiment from FinViz News.
