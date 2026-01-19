@@ -12,7 +12,7 @@ class MacroConnector:
         self.api_key = config.FRED_API_KEY
         
     @st.cache_data(ttl=3600)
-    def fetch_economic_calendar(self):
+    def fetch_economic_calendar(_self):
         """
         Fetches next release dates for key economic indicators using raw FRED API.
         """
@@ -30,7 +30,7 @@ class MacroConnector:
         
         for event, rid in releases.items():
             try:
-                url = f"https://api.stlouisfed.org/fred/release/dates?release_id={rid}&realtime_start={today}&include_release_dates_with_no_data=true&sort_order=asc&limit=10&api_key={self.api_key}&file_type=json"
+                url = f"https://api.stlouisfed.org/fred/release/dates?release_id={rid}&realtime_start={today}&include_release_dates_with_no_data=true&sort_order=asc&limit=10&api_key={_self.api_key}&file_type=json"
                 r = requests.get(url, timeout=5)
                 if r.status_code == 200:
                     data = r.json()
@@ -52,26 +52,26 @@ class MacroConnector:
         return pd.DataFrame(columns=["Event", "Date"])
 
     @st.cache_data(ttl=3600)
-    def fetch_yield_curve(self):
+    def fetch_yield_curve(_self):
         """
         Fetches 10Y-2Y Treasury Yield Spread.
         Series: T10Y2Y
         """
         try:
-            return self.fred.get_series('T10Y2Y')
+            return _self.fred.get_series('T10Y2Y')
         except Exception as e:
             print(f"FRED Yield Curve Error: {e}")
             return pd.Series()
             
     @st.cache_data(ttl=3600)
-    def fetch_credit_spreads(self):
+    def fetch_credit_spreads(_self):
         """
         Fetches ICE BofA US High Yield Index Option-Adjusted Spread.
         Series: BAMLH0A0HYM2
         Returns Z-Score.
         """
         try:
-            spreads = self.fred.get_series('BAMLH0A0HYM2')
+            spreads = _self.fred.get_series('BAMLH0A0HYM2')
             # Calculate Z-Score: (Current - Mean) / StdDev
             # Using 1-year window for Z-Score context or full history?
             # PRD: "High Yield Spreads Z-Score"
@@ -88,7 +88,7 @@ class MacroConnector:
             return pd.Series()
             
     @st.cache_data(ttl=3600)
-    def fetch_sentiment(self):
+    def fetch_sentiment(_self):
         """
         Fetches general market sentiment from FinViz News.
         Uses NLTK Vader.
