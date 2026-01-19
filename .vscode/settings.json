@@ -1,0 +1,7 @@
+{
+    "python.testing.pytestArgs": [
+        "Market Immune System"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
+}
