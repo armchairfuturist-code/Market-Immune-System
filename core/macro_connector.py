@@ -67,24 +67,41 @@ class MacroConnector:
     def fetch_credit_spreads(_self):
         """
         Fetches ICE BofA US High Yield Index Option-Adjusted Spread.
-        Series: BAMLH0A0HYM2
-        Returns Z-Score.
+        Fallback: Uses HYG/LQD ratio if FRED is down.
         """
         try:
             spreads = _self.fred.get_series('BAMLH0A0HYM2')
-            # Calculate Z-Score: (Current - Mean) / StdDev
-            # Using 1-year window for Z-Score context or full history?
-            # PRD: "High Yield Spreads Z-Score"
-            # Let's use a rolling 1-year window or 3-year window for context.
-            # Standard: 252 days
-            
+            if spreads is None or spreads.empty:
+                raise ValueError("FRED Data Empty")
+                
+            # Calculate Z-Score
             roll_mean = spreads.rolling(window=252).mean()
             roll_std = spreads.rolling(window=252).std()
             z_score = (spreads - roll_mean) / roll_std
-            
             return z_score
+            
         except Exception as e:
-            print(f"FRED Credit Spread Error: {e}")
+            print(f"FRED Credit Spread Error: {e}. Using Proxy (HYG/LQD).")
+            try:
+                # Fallback: HYG vs LQD
+                import yfinance as yf
+                proxy_data = yf.download(["HYG", "LQD"], period="2y", progress=False, threads=False)['Close']
+                if not proxy_data.empty:
+                    # Ratio: HYG (Junk) / LQD (Quality)
+                    # Higher Ratio = Risk On (Low Stress). Lower Ratio = Risk Off (High Stress).
+                    ratio = proxy_data["HYG"] / proxy_data["LQD"]
+                    
+                    # We want Stress metric. So Invert.
+                    # Z-Score of Ratio.
+                    roll_mean = ratio.rolling(window=60).mean()
+                    roll_std = ratio.rolling(window=60).std()
+                    z_proxy = (ratio - roll_mean) / roll_std
+                    
+                    # Invert so Positive Z = High Stress (Low HYG/LQD)
+                    return -z_proxy
+            except Exception as proxy_e:
+                print(f"Proxy failed: {proxy_e}")
+                
             return pd.Series()
             
     @st.cache_data(ttl=3600)

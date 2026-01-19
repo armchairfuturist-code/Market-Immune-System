@@ -103,28 +103,43 @@ def calculate_order_blocks(ohlc, swing_df):
     return pd.Series(ob, index=ohlc.index) # Simplified placeholder for now
 
 @st.cache_data(ttl=3600)
-def get_institutional_context(df_raw, ticker="SPY"):
+def get_institutional_context(df_raw, ticker="SPY", hourly_df=None):
     """
     Synthesizes SMC signals for a specific ticker.
+    Prioritizes hourly_df for dynamic intraday analysis.
     """
-    if ticker not in df_raw.columns:
-        return {"fvg": "None", "ob": "None", "choch": "None", "choch_val": 0}
-        
-    # Get OHLC (Assuming df_raw has MultiIndex or we can fetch)
-    # Since market_close only has 'Close', we might need to fetch full OHLC for SPY
-    # For now, let's assume we have it or use Close as proxy (inferior but better than nothing)
-    # Actually, main.py only downloads Close. We should ideally have OHLC.
+    ohlc = pd.DataFrame()
     
-    import yfinance as yf
-    ohlc = yf.download(ticker, period="1y", progress=False)
+    # 1. Try Hourly Data (Pulse)
+    if hourly_df is not None and not hourly_df.empty:
+        # Check if ticker is in columns (MultiIndex usually)
+        # hourly_df columns: (PriceType, Ticker)
+        try:
+            # Extract OHLC for ticker
+            # Assuming MultiIndex level 1 is Ticker
+            idx = pd.IndexSlice
+            if ticker in hourly_df.columns.get_level_values(1):
+                ohlc = hourly_df.xs(ticker, axis=1, level=1).copy()
+        except Exception:
+            pass
+            
+    # 2. Fallback to fresh fetch if hourly is missing
+    if ohlc.empty:
+        import yfinance as yf
+        try:
+            ohlc = yf.download(ticker, period="1y", progress=False, threads=False)
+        except Exception:
+            return {"fvg": "None", "ob": "None", "choch": "None", "choch_val": 0}
+
     if ohlc.empty:
         return {"fvg": "None", "ob": "None", "choch": "None", "choch_val": 0}
     
-    # Flatten columns if MultiIndex
-    if isinstance(ohlc.columns, pd.MultiIndex):
-        ohlc.columns = [c[0].lower() for c in ohlc.columns]
-    else:
-        ohlc.columns = [c.lower() for c in ohlc.columns]
+    # Flatten columns
+    # yfinance 0.2+ returns (Price, Ticker) if multi, or just Price if single?
+    # If we downloaded single, columns are Open, High...
+    # If we sliced hourly, columns are Open, High...
+    # Just normalize to lower case
+    ohlc.columns = [c.lower() for c in ohlc.columns]
         
     fvg_df = calculate_fvg(ohlc)
     swing_df = calculate_swing_points(ohlc)

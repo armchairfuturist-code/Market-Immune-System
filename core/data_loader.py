@@ -127,10 +127,25 @@ def fetch_market_data(assets, period="2y", start_date=None):
 
             except Exception as e:
                 print(f"Today fix failed: {e}")
+                
+    # Pulse Fetch (1-Hour Data for Dynamic SMC)
+    hourly_data = pd.DataFrame()
+    try:
+        pulse_assets = ["SPY", "QQQ", "NVDA", "BTC-USD"]
+        # Filter pulse assets that are in the requested assets list to avoid unnecessary calls if not needed, 
+        # but these are standard leaders so we force fetch them for the SMC engine.
+        print("Fetching 1-hour pulse data...")
+        hourly_data = yf.download(pulse_assets, period="5d", interval="1h", progress=False, group_by='column', threads=False)
+        # Handle MultiIndex if needed (yf > 0.2) - we usually want 'Close' for SMC
+        if isinstance(hourly_data.columns, pd.MultiIndex):
+            # Keep structure or simplify? SMC engine likely wants OHLC.
+            # Let's return the full OHLC dataframe for these assets.
+            pass
+    except Exception as e:
+        print(f"Hourly fetch failed: {e}")
             
-    return full_close, full_volume
+    return full_close, full_volume, hourly_data
 
-@st.cache_data(ttl=3600)
 def fetch_next_earnings(tickers, limit=10):
     """
     Fetches next earnings dates for a list of tickers.
