@@ -5,8 +5,16 @@ import streamlit as st
 from fredapi import Fred
 from config import FRED_API_KEY
 
+# Try to import OpenBB as an alternative data source
+try:
+    from openbb import obb
+    OPENBB_AVAILABLE = True
+except ImportError:
+    OPENBB_AVAILABLE = False
+    st.info("OpenBB not available. Install with: pip install openbb")
+
 @st.cache_data(ttl=3600)
-def fetch_market_data(assets, period="2y", start_date=None):
+def fetch_market_data(assets, period="2y", start_date=None, use_openbb=False):
     """
     Fetches market data with 'Zero-Trust' fixes.
     1. Monday Fix: Handles 24/7 Crypto vs M-F Stocks.
@@ -17,7 +25,14 @@ def fetch_market_data(assets, period="2y", start_date=None):
         df_hourly: Hourly OHLC data for leaders (SPY, QQQ, NVDA, BTC-USD) - last 5 days
     """
     
-    # Split assets into Crypto and Stocks for separate handling if needed, 
+    # Try OpenBB first if requested and available
+    if use_openbb and OPENBB_AVAILABLE:
+        try:
+            return _fetch_with_openbb(assets, period, start_date)
+        except Exception as e:
+            st.warning(f"OpenBB fetch failed: {e}. Falling back to yfinance.")
+    
+    # Split assets into Crypto and Stocks for separate handling if needed,
     # but yfinance can download all at once. The issue is alignment.
     # However, downloading separately gives more control.
     
@@ -37,7 +52,7 @@ def fetch_market_data(assets, period="2y", start_date=None):
             stocks_data = yf.download(stock_assets, period=period, progress=False, group_by='column', threads=False)
         
         # yfinance > 0.2 returns MultiIndex columns [('Adj Close', 'AAPL'), ...] or [('Close', 'AAPL')...]
-        # We prefer 'Close' if auto_adjust=True, or 'Adj Close'. 
+        # We prefer 'Close' if auto_adjust=True, or 'Adj Close'.
         # Let's assume standard behavior.
         
         # Check if MultiIndex
@@ -149,14 +164,144 @@ def fetch_market_data(assets, period="2y", start_date=None):
             
     return full_close, hourly_data
 
-def fetch_next_earnings(tickers, limit=10):
+
+def _fetch_with_openbb(assets, period="2y", start_date=None):
+    """
+    Fetch market data using OpenBB as an alternative to yfinance.
+    OpenBB often provides more reliable and faster data access.
+    """
+    print(f"Fetching {len(assets)} assets using OpenBB...")
+    
+    # Convert period to OpenBB format
+    if period == "2y":
+        openbb_period = "2y"
+    elif period == "1mo":
+        openbb_period = "1mo"
+    else:
+        openbb_period = period
+    
+    # Fetch data for all assets
+    all_data = []
+    for asset in assets:
+        try:
+            # Try to fetch equity data first
+            if "-USD" not in asset:
+                # Stock/ETF
+                data = obb.equity.price.historical(
+                    symbol=asset,
+                    start_date=start_date,
+                    end_date=None,
+                    interval="1d"
+                ).to_df()
+            else:
+                # Crypto
+                crypto_symbol = asset.replace("-USD", "")
+                data = obb.crypto.price.historical(
+                    symbol=crypto_symbol,
+                    start_date=start_date,
+                    end_date=None,
+                    interval="1d"
+                ).to_df()
+            
+            if not data.empty:
+                # Extract close and volume
+                close_col = 'close' if 'close' in data.columns else 'adj_close'
+                volume_col = 'volume' if 'volume' in data.columns else None
+                
+                if close_col in data.columns:
+                    close_series = data[close_col]
+                    close_series.name = asset
+                    all_data.append(close_series)
+                    
+                    if volume_col and volume_col in data.columns:
+                        volume_series = data[volume_col]
+                        volume_series.name = asset
+                        all_data.append(volume_series)
+                        
+        except Exception as e:
+            print(f"OpenBB fetch failed for {asset}: {e}")
+            continue
+    
+    if not all_data:
+        return pd.DataFrame(), pd.DataFrame()
+    
+    # Combine all close prices
+    close_data = pd.concat([d for i, d in enumerate(all_data) if i % 2 == 0], axis=1)
+    volume_data = pd.concat([d for i, d in enumerate(all_data) if i % 2 == 1], axis=1)
+    
+    # Forward fill missing data
+    close_data = close_data.ffill()
+    volume_data = volume_data.fillna(0)
+    
+    # Fetch hourly data for leaders
+    hourly_data = pd.DataFrame()
+    try:
+        leader_assets = ["SPY", "QQQ", "NVDA", "BTC-USD"]
+        hourly_data_list = []
+        
+        for asset in leader_assets:
+            try:
+                if "-USD" not in asset:
+                    data = obb.equity.price.historical(
+                        symbol=asset,
+                        start_date=None,
+                        end_date=None,
+                        interval="1h"
+                    ).to_df()
+                else:
+                    crypto_symbol = asset.replace("-USD", "")
+                    data = obb.crypto.price.historical(
+                        symbol=crypto_symbol,
+                        start_date=None,
+                        end_date=None,
+                        interval="1h"
+                    ).to_df()
+                
+                if not data.empty:
+                    data.name = asset
+                    hourly_data_list.append(data)
+            except Exception as e:
+                print(f"OpenBB hourly fetch failed for {asset}: {e}")
+                continue
+        
+        if hourly_data_list:
+            hourly_data = pd.concat(hourly_data_list, axis=1)
+    except Exception as e:
+        print(f"OpenBB hourly fetch failed: {e}")
+    
+    return close_data, hourly_data
+
+def fetch_next_earnings(tickers, limit=10, use_openbb=False):
     """
     Fetches next earnings dates for a list of tickers.
     """
     earnings_data = []
     today = datetime.datetime.now().date()
     
-    # Process only top N to avoid timeout
+    # Try OpenBB first if requested and available
+    if use_openbb and OPENBB_AVAILABLE:
+        try:
+            for t in tickers[:limit]:
+                try:
+                    # Use OpenBB for earnings data
+                    earnings_dates = obb.equity.fundamentals.earnings_dates(symbol=t).to_df()
+                    if not earnings_dates.empty:
+                        # Filter for future dates
+                        future = earnings_dates[earnings_dates.index.date >= today]
+                        if not future.empty:
+                            next_date = future.index.min().date()
+                            earnings_data.append({"Ticker": t, "Date": next_date})
+                except Exception as e:
+                    print(f"OpenBB earnings fetch failed for {t}: {e}")
+                    continue
+            
+            if earnings_data:
+                return pd.DataFrame(earnings_data).sort_values("Date")
+            return pd.DataFrame(columns=["Ticker", "Date"])
+        except Exception as e:
+            st.warning(f"OpenBB earnings fetch failed: {e}. Falling back to yfinance.")
+    
+    # Fallback to yfinance
     for t in tickers[:limit]:
         try:
             tick = yf.Ticker(t)
@@ -178,10 +323,27 @@ def fetch_next_earnings(tickers, limit=10):
     return pd.DataFrame(columns=["Ticker", "Date"])
 
 @st.cache_data(ttl=3600)
-def fetch_futures_data(period="1mo"):
+def fetch_futures_data(period="1mo", use_openbb=False):
     """
     Fetches S&P 500 Futures (ES=F) for trend projection.
     """
+    # Try OpenBB first if requested and available
+    if use_openbb and OPENBB_AVAILABLE:
+        try:
+            # OpenBB uses different futures symbols
+            futures_data = obb.futures.price.historical(
+                symbol="ES",
+                start_date=None,
+                end_date=None,
+                interval="1d"
+            ).to_df()
+            
+            if not futures_data.empty and 'close' in futures_data.columns:
+                return futures_data['close']
+        except Exception as e:
+            st.warning(f"OpenBB futures fetch failed: {e}. Falling back to yfinance.")
+    
+    # Fallback to yfinance
     try:
         # Fetch generic future
         f = yf.download("ES=F", period=period, progress=False, threads=False)

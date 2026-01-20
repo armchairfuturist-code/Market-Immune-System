@@ -4,7 +4,12 @@ import datetime
 import config
 from core import data_loader, math_engine, macro_connector, cycle_engine, report_generator, cycle_playbook, smc_engine
 from ui import charts
-import yfinance as yf
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
+    st.warning("yfinance not available. Please install with: pip install yfinance")
 
 # 1. Page Config
 st.set_page_config(
@@ -26,6 +31,16 @@ st.sidebar.title("🛡️ Market Immune System")
 st.sidebar.caption("System Horizon: 7-14 Days")
 st.sidebar.markdown("---")
 
+# Data Source Selection
+st.sidebar.markdown("### 📊 Data Source")
+data_source = st.sidebar.radio(
+    "Select Data Source",
+    options=["yfinance (Default)", "OpenBB (Faster)"],
+    index=0,
+    help="OpenBB provides more reliable data but requires installation"
+)
+use_openbb = data_source == "OpenBB (Faster)"
+
 # Time Travel Cap
 today = datetime.datetime.now().date()
 analysis_date = st.sidebar.date_input("Analysis Date", today, max_value=today)
@@ -39,17 +54,17 @@ st.sidebar.markdown("### 📅 Catalyst Watch")
 
 # 4. Data Loading
 @st.cache_data(ttl=3600)
-def get_market_data(start_date):
+def get_market_data(start_date, use_openbb=False):
     # Fetch with buffer for calculations (Turbulence needs 365d history)
     if isinstance(start_date, datetime.datetime):
         start_date = start_date.date()
     buffer_date = start_date - datetime.timedelta(days=365)
     
-    df_close, hourly_df = data_loader.fetch_market_data(config.ASSET_UNIVERSE, start_date=buffer_date)
+    df_close, hourly_df = data_loader.fetch_market_data(config.ASSET_UNIVERSE, start_date=buffer_date, use_openbb=use_openbb)
     # Earnings (Fast changing)
-    earnings = data_loader.fetch_next_earnings(config.GROWTH_ASSETS, limit=10)
+    earnings = data_loader.fetch_next_earnings(config.GROWTH_ASSETS, limit=10, use_openbb=use_openbb)
     # Futures Trend
-    futures = data_loader.fetch_futures_data(period="3mo")
+    futures = data_loader.fetch_futures_data(period="3mo", use_openbb=use_openbb)
     
     return df_close, earnings, futures, hourly_df
 
@@ -69,7 +84,7 @@ st.sidebar.info("v3.0 | Zero-Trust Engine")
 if 'data' not in st.session_state or st.sidebar.button("Forced Reload"):
     st.cache_data.clear()
     with st.spinner("Initializing Zero-Trust Data Engine (The 99)..."):
-        market_close, earnings_df, futures_df, hourly_df = get_market_data(start_date)
+        market_close, earnings_df, futures_df, hourly_df = get_market_data(start_date, use_openbb=use_openbb)
         macro_yield, macro_credit, macro_sentiment, econ_df = get_macro_data()
         
         st.session_state.data = {
@@ -262,10 +277,105 @@ if not curr_turb.empty:
             if x: days_elevated += 1
             else: break
 
-# Time Context
+# Time Context & Market Status
 last_date = curr_turb.index[-1]
 day_name = last_date.strftime("%A")
-is_weekend = day_name in ["Saturday", "Sunday"]
+current_time = datetime.datetime.now()
+
+def is_bank_holiday(check_date):
+    """Check if date is a US bank holiday"""
+    # Common US bank holidays - simplified for demo
+    # In production, you'd use a proper holiday calendar
+    month_day = (check_date.month, check_date.day)
+    holidays = [
+        (1, 1),   # New Year's Day
+        (1, 20),  # Martin Luther King Day (3rd Monday in January)
+        (7, 4),   # Independence Day
+        (12, 25), # Christmas
+        (12, 24), # Christmas Eve (half-day, but often closed)
+        (11, 27), # Thanksgiving (4th Thursday)
+        (9, 2),   # Labor Day (1st Monday)
+        (2, 17),  # Presidents' Day (3rd Monday)
+        (5, 26),  # Memorial Day (last Monday)
+    ]
+    return month_day in holidays
+
+def get_market_status():
+    """Determine market status and return status info"""
+    # Check if it's weekend
+    if day_name in ["Saturday", "Sunday"]:
+        return {
+            "status": "CLOSED",
+            "reason": "Weekend",
+            "is_trading": False,
+            "impacts": ["real_time_data", "institutional_footprints", "volume_analysis"]
+        }
+    
+    # Check if it's a bank holiday
+    if is_bank_holiday(last_date.date()):
+        return {
+            "status": "CLOSED",
+            "reason": "Bank Holiday",
+            "is_trading": False,
+            "impacts": ["real_time_data", "institutional_footprints", "volume_analysis"]
+        }
+    
+    # Check if market hours (9:30 AM - 4:00 PM ET)
+    # Convert to ET for market hours check
+    et_offset = datetime.timedelta(hours=5)  # UTC to ET
+    et_time = current_time - et_offset
+    
+    # Market hours: 9:30 AM to 4:00 PM ET
+    market_open = datetime.time(9, 30)
+    market_close = datetime.time(16, 0)
+    
+    if et_time.time() < market_open or et_time.time() > market_close:
+        return {
+            "status": "AFTER HOURS",
+            "reason": "Market Closed (Outside Trading Hours)",
+            "is_trading": False,
+            "impacts": ["real_time_data", "institutional_footprints"]
+        }
+    
+    return {
+        "status": "OPEN",
+        "reason": "Trading Hours",
+        "is_trading": True,
+        "impacts": []
+    }
+
+market_status = get_market_status()
+is_weekend = market_status["status"] == "CLOSED" and market_status["reason"] in ["Weekend", "Bank Holiday"]
+
+# Market Status Badge (in sidebar)
+status_color_map = {
+    "OPEN": "green",
+    "AFTER HOURS": "yellow",
+    "CLOSED": "red"
+}
+
+status_icon_map = {
+    "OPEN": "✅",
+    "AFTER HOURS": "🌙",
+    "CLOSED": "⚠️"
+}
+
+status_badge = f"{status_icon_map[market_status['status']]} **MARKET {market_status['status']}**"
+status_badge += f" - {market_status['reason']}"
+
+if market_status['impacts']:
+    impacted_vars = ", ".join([f"`{var}`" for var in market_status['impacts']])
+    status_badge += f" | **Impacted:** {impacted_vars}"
+
+if market_status['status'] == "OPEN":
+    st.sidebar.success(status_badge)
+elif market_status['status'] == "AFTER HOURS":
+    st.sidebar.warning(status_badge)
+else:
+    st.sidebar.error(status_badge)
+
+if not market_status['is_trading']:
+    st.sidebar.caption(f"**Note:** {market_status['reason']} - Analysis based on last available data. Real-time updates paused.")
 
 status_report = report_generator.generate_immune_report(
     date=last_date.date(),
@@ -313,75 +423,87 @@ with st.container(border=True):
 
 # Institutional Footprints (SMC)
 with st.expander("🏦 Institutional Footprints", expanded=False):
-    st.caption("Cross-verifying Quant signals with institutional price patterns (Smart Money Concepts).")
-    smc1, smc2, smc3 = st.columns(3)
-    
-    with smc1:
-        st.markdown("**Price Imbalance (FVG)**")
-        st.info(smc_context["fvg"])
-        st.caption("Unfilled gaps where institutions moved too fast for 'fair value' to be established.")
+    if not market_status['is_trading']:
+        # Show static status for non-trading periods
+        status_indicator = "📊 Weekend Mode" if market_status['reason'] == "Weekend" else "📅 Holiday Mode" if market_status['reason'] == "Bank Holiday" else "🌙 After Hours"
+        st.caption(f"{status_indicator}: Static institutional structure (Market {market_status['status']})")
         
-    with smc2:
-        st.markdown("**Institutional Floor/Ceiling (OB)**")
-        st.info(smc_context["ob"])
-        st.caption("Active levels where massive institutional orders were last filled.")
+        # Detailed impact explanation
+        impact_explanation = {
+            "real_time_data": "Real-time order flow and volume analysis",
+            "institutional_footprints": "Smart Money Concepts (FVG, OB, CHoCH)",
+            "volume_analysis": "Volume profile and liquidity metrics"
+        }
         
-    with smc3:
-        st.markdown("**Change of Character (CHoCH)**")
-        if smc_context["choch_val"] == 1:
-            st.success(f"✅ {smc_context['choch']}")
-        elif smc_context["choch_val"] == -1:
-            st.error(f"🚨 {smc_context['choch']}")
-        else:
-            st.info(smc_context["choch"])
-        st.caption("First sign of trend structural breakdown or reversal.")
-
-# Advanced Quant Signals
-with st.expander("⚡ Advanced Quant Signals", expanded=False):
-    # Calculate RSI locally for breakdown
-    delta = spy_p.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    last_rsi = rsi.iloc[-1] if not rsi.empty else 50
-
-    aq_cols = st.columns([1, 2])
-
-    with aq_cols[0]:
-        # Main Signal
-        signal_color = "normal"
-        if "BUY" in super_signal: signal_color = "off" # Greenish usually
-        elif "SELL" in super_signal: signal_color = "inverse" # Red
+        impacted_vars_text = ", ".join([impact_explanation.get(var, var) for var in market_status['impacts']])
+        st.info(f"**Market {market_status['status']} Analysis:** Institutional footprints remain fixed until next market open. No new institutional activity expected. **Impacted:** {impacted_vars_text}")
         
-        st.metric("Math Super-Signal", "ACTIVE", delta=super_signal, delta_color=signal_color)
-        st.caption("Synthesis of Liquidity, Fractals, and Momentum.")
-
-    with aq_cols[1]:
-        with st.container(border=True):
-            st.markdown("#### 🔬 Signal Analysis")
+        smc1, smc2, smc3 = st.columns(3)
+        
+        with smc1:
+            st.markdown("**Price Imbalance (FVG)**")
+            st.info("Static - Market Closed")
+            st.caption("Unfilled gaps where institutions moved too fast for 'fair value' to be established. No new FVGs forming.")
             
-            # 1. Signal Breakdown
-            st.markdown("**1. Signal Breakdown**")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Exit Door Size", f"{last_amihud:.1f}σ", "Wide Open" if last_amihud < 0 else "Stress", delta_color="inverse", help="Negative = Wide open. Easy to sell.")
-            c2.metric("Trend Quality", f"{last_hurst:.2f}", "Crowded" if last_hurst > 0.65 else "Robust", delta_color="inverse", help="0.78 = Crowded. Too many people are on one side of the boat.")
-            c3.metric("Momentum (RSI)", f"{last_rsi:.0f}", "Overbought" if last_rsi > 70 else "Oversold" if last_rsi < 30 else "Neutral", delta_color="inverse")
+        with smc2:
+            st.markdown("**Institutional Floor/Ceiling (OB)**")
+            st.info("Static - Market Closed")
+            st.caption("Active levels where massive institutional orders were last filled. Levels remain unchanged.")
             
-            # 2. Weighting
-            st.markdown("**2. Weighting Rationale:** Liquidity is the *prerequisite* for price movement. Trend Structure (Hurst) determines if a move is sustainable. Momentum (RSI) is the trigger.")
+        with smc3:
+            st.markdown("**Change of Character (CHoCH)**")
+            st.info("Static - Market Closed")
+            st.caption("First sign of trend structural breakdown or reversal. No new CHoCH signals expected.")
+    else:
+        st.caption("Cross-verifying Quant signals with institutional price patterns (Smart Money Concepts).")
+        smc1, smc2, smc3 = st.columns(3)
+        
+        with smc1:
+            st.markdown("**Price Imbalance (FVG)**")
+            st.info(smc_context["fvg"])
+            st.caption("Unfilled gaps where institutions moved too fast for 'fair value' to be established.")
             
-            # 3. Predictive Power
-            st.markdown("**3. Predictive Power:** Historically effective at identifying *structural exhaustion* before price reversal. High success rate when Liquidity Stress aligns with Extremes in Hurst.")
+        with smc2:
+            st.markdown("**Institutional Floor/Ceiling (OB)**")
+            st.info(smc_context["ob"])
+            st.caption("Active levels where massive institutional orders were last filled.")
             
-            # 4. Actionable Insights
-            st.markdown("**4. Actionable Insights:**")
-            if "BUY" in super_signal:
-                st.success("✅ **Aggressive Entry:** Liquidity returning to oversold market. Look for mean reversion.")
-            elif "SELL" in super_signal:
-                st.error("🛑 **Exit/Hedge:** Market is fragile, illiquid, and overextended. Crash risk high.")
+        with smc3:
+            st.markdown("**Change of Character (CHoCH)**")
+            if smc_context["choch_val"] == 1:
+                st.success(f"✅ {smc_context['choch']}")
+            elif smc_context["choch_val"] == -1:
+                st.error(f"🚨 {smc_context['choch']}")
             else:
-                st.info("⏸️ **Wait:** Market structure is stable. Trade the trend, but verify setup.")
+                st.info(smc_context["choch"])
+            st.caption("First sign of trend structural breakdown or reversal.")
+
+with st.expander("⚡ Market Mechanics (The 'Engine' Room)", expanded=False):
+    st.markdown("### 🔬 System Health Diagnostics")
+    c1, c2, c3 = st.columns(3)
+    
+    # Hurst -> Herd Behavior
+    herd_status = "Random/Healthy"
+    if last_hurst > 0.75: herd_status = "⚠️ CROWDED (Bubble Risk)"
+    elif last_hurst < 0.45: herd_status = "Choppy/Uncertain"
+    
+    c1.metric("Herd Behavior (Hurst)", f"{last_hurst:.2f}", herd_status)
+    c1.caption("Measures if everyone is chasing the same trade. High = Brittle.")
+    
+    # Amihud -> Market Fluidity
+    fluidity = "Liquid/Healthy"
+    if last_amihud > 2.0: fluidity = "⚠️ DRYING UP (Crash Risk)"
+    
+    c2.metric("Market Fluidity", f"{last_amihud:.1f}σ", fluidity)
+    c2.caption("Size of the exit door. If 'Drying Up', small sales cause big drops.")
+    
+    # Turbulence -> System Fever
+    fever = "Normal"
+    if last_turb > 370: fever = "CRITICAL"
+    elif last_turb > 180: fever = "ELEVATED"
+    
+    c3.metric("System Fever (Stress)", f"{last_turb:.0f}/1000", fever)
+    c3.caption("Measures 'weirdness'. High fever precedes structural breaks.")
 
 # Institutional Macro Ratios
 with st.expander("🏛️ Institutional Macro Ratios", expanded=False):
@@ -494,31 +616,28 @@ with st.container(border=True):
             st.error(f"**AVOID:** {', '.join(playbook['capital_rotation']['Sell/Avoid'])}")
 
 # Metrics Row
-turb_delta = "Weekend Mode" if is_weekend else "Low Vol" if last_turb < 50 else "Active"
+turb_delta = f"{market_status['status']} Mode" if not market_status['is_trading'] else "Low Vol" if last_turb < 50 else "Active"
 
 # Dynamic Interpretations
-# 1. Market Stress Index
+# 1. System Fever (Turbulence)
 turb_interp = "Calm/Normal"
-if last_turb > 180: turb_interp = "Elevated Stress"
-if last_turb > 370: turb_interp = "CRITICAL Instability"
-turb_help = f"""**Definition:** Measures how 'weird' or unusual today's price moves are compared to the last year.\n\n**Significance:** High stress often precedes crashes. It detects hidden stress before price drops.\n\n**Current Status:** {last_turb:.0f} -> {turb_interp}."""
+if last_turb > 300: turb_interp = "SICK - Market acting abnormal"
+turb_help = f"""**Definition:** Measures how 'weird' or unusual today's price moves are compared to the last year.\n\n**Significance:** >300: The market is acting 'sick'. Normal patterns are breaking down.\n\n**Current Status:** {last_turb:.0f} -> {turb_interp}."""
 
 # 2. Contagion Risk
 abs_interp = "Resilient (Diverse)"
 if last_abs > 0.80: abs_interp = "Highly Fragile (Unified)"
 abs_help = f"""**Definition:** The % of assets moving in lockstep.\n\n**Significance:** 94% of stocks are moving in lockstep; if one trips, they all fall.\n\n**Current Status:** {last_abs:.0%}: -> {abs_interp}."""
 
-# 3. Trend Quality
+# 3. Herd Behavior (Hurst)
 hurst_interp = "Random Walk (Healthy)"
-if last_hurst > 0.65: hurst_interp = "Trending"
-if last_hurst > 0.75: hurst_interp = "Crowded/Brittle Trend"
-hurst_help = f"""**Definition:** Measures how 'persistent' a trend is.\n\n**Significance:** 0.78 = Crowded. Too many people are on one side of the boat.\n\n**Current Status:** {last_hurst:.2f} -> {hurst_interp}."""
+if last_hurst > 0.70: hurst_interp = "Panic/FOMO - High reversal risk"
+hurst_help = f"""**Definition:** Measures how 'persistent' a trend is.\n\n**Significance:** >0.70: Market is panicking or FOMO-ing in one direction. High risk of a reversal.\n\n**Current Status:** {last_hurst:.2f} -> {hurst_interp}."""
 
-# 4. Exit Door Size
+# 4. Market Pulse (Amihud)
 liq_interp = "Normal Liquidity"
-if last_amihud > 1.0: liq_interp = "Thin Liquidity"
-if last_amihud > 2.0: liq_interp = "Liquidity Hole (Danger)"
-liq_help = f"""**Definition:** How much price moves per dollar traded.\n\n**Significance:** Negative = Wide open. Easy to sell.\n\n**Current Status:** {last_amihud:.1f}σ -> {liq_interp}."""
+if last_amihud > 2.0: liq_interp = "Holes Found - Big players struggling"
+liq_help = f"""**Definition:** How much price moves per dollar traded.\n\n**Significance:** >2.0: Holes found in the market. Big players are struggling to find buyers/sellers.\n\n**Current Status:** {last_amihud:.1f}σ -> {liq_interp}."""
 
 # 5. Sentiment
 sent_interp = "Neutral"
