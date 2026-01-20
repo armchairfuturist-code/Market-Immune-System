@@ -4,6 +4,7 @@ from sklearn.decomposition import PCA
 from scipy.linalg import solve
 import config
 import streamlit as st
+import warnings
 
 @st.cache_data
 def calculate_turbulence(prices_df, lookback=365):
@@ -407,6 +408,31 @@ def calculate_sector_turbulence(prices_df, sector_assets, lookback=365):
     # Mahalanobis on small N is fine if T is large enough.
     if len(valid_assets) < 2:
         return pd.Series(index=prices_df.index).fillna(0)
-        
+
     subset = prices_df[valid_assets]
     return calculate_turbulence(subset, lookback=lookback)
+
+def check_black_swan_alignment(turb, absorption, yield_curve, smc_choch):
+    """
+    The Ultimate Crash Trigger: Aligns macro, micro, and structure signals.
+    """
+    # Input validation to prevent errors (e.g., from undefined variables like in day_name)
+    if not all(isinstance(x, (int, float)) for x in [turb, absorption]):
+        raise ValueError("turb and absorption must be numeric")
+    if not isinstance(yield_curve, (int, float)):
+        yield_curve = 0  # Safe default
+    if not isinstance(smc_choch, (int, float, str)):
+        smc_choch = 0  # Safe default; treat as numeric for >/<
+
+    signals = 0
+    if turb > 370: signals += 1  # Volatility spike
+    if absorption > 0.85: signals += 1  # Absorption/unity indicator
+    if yield_curve < 0: signals += 1  # Inverted curve
+    if smc_choch in ["Bullish", 1] or (isinstance(smc_choch, (int, float)) and smc_choch == 1):  # Choch breakout flag; update logic for structure
+        signals += 1  # Positive for black swan if alignment
+
+    if signals >= 3:
+        return "🚨 BLACK SWAN WARNING: Full System Alignment - Imminent Crash Potential"
+    elif signals == 2:
+        return "⚠️ Minor Alignment: Monitor Closely"
+    return "Normal - No Significant Alerts"

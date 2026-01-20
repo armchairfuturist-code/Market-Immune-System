@@ -71,37 +71,42 @@ class MacroConnector:
         """
         try:
             spreads = _self.fred.get_series('BAMLH0A0HYM2')
+            print(f"FRED spreads fetched: {len(spreads)} entries")
             if spreads is None or spreads.empty:
                 raise ValueError("FRED Data Empty")
-                
+
             # Calculate Z-Score
-            roll_mean = spreads.rolling(window=252).mean()
-            roll_std = spreads.rolling(window=252).std()
+            roll_mean = spreads.rolling(window=252, min_periods=126).mean()
+            roll_std = spreads.rolling(window=252, min_periods=126).std()
             z_score = (spreads - roll_mean) / roll_std
+            print("FRED Z-score calculated successfully")
             return z_score
-            
+
         except Exception as e:
             print(f"FRED Credit Spread Error: {e}. Using Proxy (HYG/LQD).")
             try:
                 # Fallback: HYG vs LQD
                 import yfinance as yf
                 proxy_data = yf.download(["HYG", "LQD"], period="2y", progress=False, threads=False)['Close']
+                print(f"Proxy data fetched: {len(proxy_data)} entries")
                 if not proxy_data.empty:
                     # Ratio: HYG (Junk) / LQD (Quality)
                     # Higher Ratio = Risk On (Low Stress). Lower Ratio = Risk Off (High Stress).
                     ratio = proxy_data["HYG"] / proxy_data["LQD"]
-                    
+
                     # We want Stress metric. So Invert.
                     # Z-Score of Ratio.
                     roll_mean = ratio.rolling(window=60).mean()
                     roll_std = ratio.rolling(window=60).std()
                     z_proxy = (ratio - roll_mean) / roll_std
-                    
+
                     # Invert so Positive Z = High Stress (Low HYG/LQD)
+                    print("Proxy Z-score calculated successfully")
                     return -z_proxy
             except Exception as proxy_e:
                 print(f"Proxy failed: {proxy_e}")
-                
+
+            print("Returning empty Series")
             return pd.Series()
             
     @st.cache_data(ttl=3600)
@@ -142,3 +147,28 @@ class MacroConnector:
         except Exception as e:
             print(f"FinViz Sentiment Error: {e}")
             return 50.0 # Neutral fallback
+
+    @st.cache_data(ttl=3600)
+    def get_polymarket_odds(_self):
+        """
+        Fetches live odds for 'Will the Fed cut rates?'
+        Polymarket API is free and public. Handles market ID search dynamically.
+        """
+        try:
+            # Dynamic search for Fed-related markets (avoids hardcoded IDs)
+            search_url = "https://clob.polymarket.com/markets?tags=Fed&active=true"
+            response = requests.get(search_url)
+            response.raise_for_status()
+            markets = response.json().get('data', [])
+            if markets:
+                # Assume first relevant market; in production, filter by exact title
+                market = markets[0]
+                market_id = market['id']
+                prob = float(market.get('probability', 0)) * 100  # Convert to %
+                event = market.get('question', 'Fed Rate Cut')
+                return {"event": f"{event} (Estimated)", "probability": f"{prob:.1f}%"}
+            else:
+                return {"event": "Fed Rate Cut", "probability": "N/A"}  # Fallback
+        except requests.RequestException as e:
+            print(f"Polymarket API error: {e}")
+            return {"event": "Fed Rate Cut", "probability": "Error"}

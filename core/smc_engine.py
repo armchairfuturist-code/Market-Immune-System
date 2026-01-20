@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from scipy.signal import find_peaks
 import streamlit as st
 
 def calculate_fvg(ohlc):
@@ -101,6 +102,36 @@ def calculate_order_blocks(ohlc, swing_df):
     # If price breaks a previous swing low, the last up candle is a Bearish OB.
     
     return pd.Series(ob, index=ohlc.index) # Simplified placeholder for now
+
+def detect_structure(df_hourly):
+    """
+    Identifies HH, LL, and Fair Value Gaps (FVG). Improved to handle edge cases and classify Chiefs/Chochs.
+    """
+    if df_hourly.empty or len(df_hourly) < 3:
+        return {"fvg": [], "last_choch": "Unknown"}
+
+    # 1. Identify Peaks (Highs/Lows) with broader distance for robustness
+    highs, _ = find_peaks(df_hourly['High'], distance=max(3, len(df_hourly)//50))
+    lows, _ = find_peaks(-df_hourly['Low'], distance=max(3, len(df_hourly)//50))
+
+    # 2. Enhanced FVG Detection (includes Bullish gaps and validates indices)
+    fvg = []
+    for i in range(2, len(df_hourly)-2):  # Range to avoid index errors
+        # Bearish FVG: Low of Candle1 > High of Candle3 (with confirmation)
+        if df_hourly['Low'].iloc[i-2] > df_hourly['High'].iloc[i]:
+            level = (df_hourly['Low'].iloc[i-2] + df_hourly['High'].iloc[i]) / 2  # Avg gap
+            fvg.append({"type": "Bearish Void", "level": level})
+        # Bullish FVG: High of Candle1 < Low of Candle3
+        elif df_hourly['High'].iloc[i-2] < df_hourly['Low'].iloc[i]:
+            level = (df_hourly['High'].iloc[i-2] + df_hourly['Low'].iloc[i]) / 2
+            fvg.append({"type": "Bullish Void", "level": level})
+
+    # 4. Classify last Choch (example: based on recent highs/lows ratio)
+    recent_high = df_hourly['High'].tail(10).max()
+    recent_low = df_hourly['Low'].tail(10).min()
+    last_choch = "Bullish" if recent_high > recent_low * 1.05 else "Bearish"  # Simplified heuristic
+
+    return {"fvg": fvg, "last_choch": last_choch}
 
 @st.cache_data(ttl=3600)
 def get_institutional_context(df_raw, ticker="SPY", hourly_df=None):

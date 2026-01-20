@@ -31,6 +31,106 @@ st.sidebar.title("🛡️ Market Immune System")
 st.sidebar.caption("System Horizon: 7-14 Days")
 st.sidebar.markdown("---")
 
+# Market Status Badge
+def is_bank_holiday(check_date):
+    """Check if date is a US bank holiday"""
+    # Common US bank holidays - simplified for demo
+    # In production, you'd use a proper holiday calendar
+    month_day = (check_date.month, check_date.day)
+    holidays = [
+        (1, 1),   # New Year's Day
+        (1, 20),  # Martin Luther King Day (3rd Monday in January)
+        (7, 4),   # Independence Day
+        (12, 25), # Christmas
+        (12, 24), # Christmas Eve (half-day, but often closed)
+        (11, 27), # Thanksgiving (4th Thursday)
+        (9, 2),   # Labor Day (1st Monday)
+        (2, 17),  # Presidents' Day (3rd Monday)
+        (5, 26),  # Memorial Day (last Monday)
+    ]
+    return month_day in holidays
+
+def get_market_status():
+    """Determine market status and return status info"""
+    current_time = datetime.datetime.now()
+    day_name = current_time.strftime("%A")
+
+    # Check if it's weekend
+    if day_name in ["Saturday", "Sunday"]:
+        return {
+            "status": "CLOSED",
+            "reason": "Weekend",
+            "is_trading": False,
+            "impacts": ["real_time_data", "institutional_footprints", "volume_analysis"]
+        }
+
+    # Check if it's a bank holiday
+    if is_bank_holiday(current_time.date()):
+        return {
+            "status": "CLOSED",
+            "reason": "Bank Holiday",
+            "is_trading": False,
+            "impacts": ["real_time_data", "institutional_footprints", "volume_analysis"]
+        }
+
+    # Check if market hours (9:30 AM - 4:00 PM ET)
+    # Convert to ET for market hours check
+    et_offset = datetime.timedelta(hours=5)  # UTC to ET
+    et_time = current_time - et_offset
+    
+    # Market hours: 9:30 AM to 4:00 PM ET
+    market_open = datetime.time(9, 30)
+    market_close = datetime.time(16, 0)
+    
+    if et_time.time() < market_open or et_time.time() > market_close:
+        return {
+            "status": "AFTER HOURS",
+            "reason": "Market Closed (Outside Trading Hours)",
+            "is_trading": False,
+            "impacts": ["real_time_data", "institutional_footprints"]
+        }
+    
+    return {
+        "status": "OPEN",
+        "reason": "Trading Hours",
+        "is_trading": True,
+        "impacts": []
+    }
+
+market_status = get_market_status()
+is_weekend = market_status["status"] == "CLOSED" and market_status["reason"] in ["Weekend", "Bank Holiday"]
+
+status_color_map = {
+    "OPEN": "green",
+    "AFTER HOURS": "yellow",
+    "CLOSED": "red"
+}
+
+status_icon_map = {
+    "OPEN": "✅",
+    "AFTER HOURS": "🌙",
+    "CLOSED": "⚠️"
+}
+
+status_badge = f"{status_icon_map[market_status['status']]} **MARKET {market_status['status']}**"
+status_badge += f" - {market_status['reason']}"
+
+if market_status['impacts']:
+    impacted_vars = ", ".join([f"`{var}`" for var in market_status['impacts']])
+    status_badge += f" | **Impacted:** {impacted_vars}"
+
+if market_status['status'] == "OPEN":
+    st.sidebar.success(status_badge)
+elif market_status['status'] == "AFTER HOURS":
+    st.sidebar.warning(status_badge)
+else:
+    st.sidebar.error(status_badge)
+
+if not market_status['is_trading']:
+    st.sidebar.caption(f"**Note:** {market_status['reason']} - Analysis based on last available data. Real-time updates paused.")
+
+st.sidebar.markdown("---")
+
 # Data Source Selection
 st.sidebar.markdown("### 📊 Data Source")
 data_source = st.sidebar.radio(
@@ -282,101 +382,6 @@ last_date = curr_turb.index[-1]
 day_name = last_date.strftime("%A")
 current_time = datetime.datetime.now()
 
-def is_bank_holiday(check_date):
-    """Check if date is a US bank holiday"""
-    # Common US bank holidays - simplified for demo
-    # In production, you'd use a proper holiday calendar
-    month_day = (check_date.month, check_date.day)
-    holidays = [
-        (1, 1),   # New Year's Day
-        (1, 20),  # Martin Luther King Day (3rd Monday in January)
-        (7, 4),   # Independence Day
-        (12, 25), # Christmas
-        (12, 24), # Christmas Eve (half-day, but often closed)
-        (11, 27), # Thanksgiving (4th Thursday)
-        (9, 2),   # Labor Day (1st Monday)
-        (2, 17),  # Presidents' Day (3rd Monday)
-        (5, 26),  # Memorial Day (last Monday)
-    ]
-    return month_day in holidays
-
-def get_market_status():
-    """Determine market status and return status info"""
-    # Check if it's weekend
-    if day_name in ["Saturday", "Sunday"]:
-        return {
-            "status": "CLOSED",
-            "reason": "Weekend",
-            "is_trading": False,
-            "impacts": ["real_time_data", "institutional_footprints", "volume_analysis"]
-        }
-    
-    # Check if it's a bank holiday
-    if is_bank_holiday(last_date.date()):
-        return {
-            "status": "CLOSED",
-            "reason": "Bank Holiday",
-            "is_trading": False,
-            "impacts": ["real_time_data", "institutional_footprints", "volume_analysis"]
-        }
-    
-    # Check if market hours (9:30 AM - 4:00 PM ET)
-    # Convert to ET for market hours check
-    et_offset = datetime.timedelta(hours=5)  # UTC to ET
-    et_time = current_time - et_offset
-    
-    # Market hours: 9:30 AM to 4:00 PM ET
-    market_open = datetime.time(9, 30)
-    market_close = datetime.time(16, 0)
-    
-    if et_time.time() < market_open or et_time.time() > market_close:
-        return {
-            "status": "AFTER HOURS",
-            "reason": "Market Closed (Outside Trading Hours)",
-            "is_trading": False,
-            "impacts": ["real_time_data", "institutional_footprints"]
-        }
-    
-    return {
-        "status": "OPEN",
-        "reason": "Trading Hours",
-        "is_trading": True,
-        "impacts": []
-    }
-
-market_status = get_market_status()
-is_weekend = market_status["status"] == "CLOSED" and market_status["reason"] in ["Weekend", "Bank Holiday"]
-
-# Market Status Badge (in sidebar)
-status_color_map = {
-    "OPEN": "green",
-    "AFTER HOURS": "yellow",
-    "CLOSED": "red"
-}
-
-status_icon_map = {
-    "OPEN": "✅",
-    "AFTER HOURS": "🌙",
-    "CLOSED": "⚠️"
-}
-
-status_badge = f"{status_icon_map[market_status['status']]} **MARKET {market_status['status']}**"
-status_badge += f" - {market_status['reason']}"
-
-if market_status['impacts']:
-    impacted_vars = ", ".join([f"`{var}`" for var in market_status['impacts']])
-    status_badge += f" | **Impacted:** {impacted_vars}"
-
-if market_status['status'] == "OPEN":
-    st.sidebar.success(status_badge)
-elif market_status['status'] == "AFTER HOURS":
-    st.sidebar.warning(status_badge)
-else:
-    st.sidebar.error(status_badge)
-
-if not market_status['is_trading']:
-    st.sidebar.caption(f"**Note:** {market_status['reason']} - Analysis based on last available data. Real-time updates paused.")
-
 status_report = report_generator.generate_immune_report(
     date=last_date.date(),
     turbulence_score=last_turb,
@@ -407,6 +412,9 @@ else:
     st.error(f"**{stance_msg}**")
 
 st.sidebar.markdown(f"**Data Horizon:** {last_date.date()} ({day_name})")
+st.sidebar.caption("**System Horizon vs Data Horizon:**")
+st.sidebar.caption("• **System Horizon (7-14 Days):** The forward-looking timeframe the system uses to detect structural breaks and regime changes. It's the 'lookahead' window for identifying emerging risks.")
+st.sidebar.caption("• **Data Horizon (Today):** The historical data point being analyzed. This is the 'lookback' anchor - the most recent market close used for current calculations.")
 
 # Display Report
 with st.container(border=True):
@@ -682,14 +690,14 @@ elif last_yield < 0.2: yield_interp = "Flat (Caution)"
 yield_help = f"""**Definition:** The difference between 10-Year and 2-Year Treasury yields.\n\n**Significance:** The most reliable recession predictor in history. Inversion (<0) signals trouble ahead.\n\n**Current Status:** {last_yield:.2f}% -> {yield_interp}."""
 
 # Credit Stress Help
-credit_val = macro_credit if isinstance(macro_credit, float) else 0.0
+credit_val = macro_credit.iloc[-1] if isinstance(macro_credit, pd.Series) and not macro_credit.empty else 0.0
 credit_interp = "Stable"
 if credit_val > 1.0: credit_interp = "Stress Rising"
 if credit_val > 2.0: credit_interp = "Credit Freeze"
 credit_help = f"""**Definition:** High Yield Bond Spreads (Risk Premium).\n\n**Significance:** If lenders demand high interest to lend to risky companies, the credit cycle is breaking.\n\n**Current Status:** {credit_val:.1f}σ -> {credit_interp}."""
 
 mac1.metric(f"Yield Curve (10Y-2Y)", f"{last_yield:.2f}%", delta="Inverted" if last_yield < 0 else "Normal", help=yield_help)
-mac2.metric("Credit Stress (HY)", f"{credit_val:.1f}σ" if isinstance(macro_credit, float) else "N/A", help=credit_help)
+mac2.metric("Credit Stress (HY)", f"{credit_val:.1f}σ", help=credit_help)
 
 # Charts
 st.markdown("### 📉 Market Health Monitor")
