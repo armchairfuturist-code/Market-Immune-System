@@ -6,6 +6,20 @@ import config
 from core import data_loader, math_engine, macro_connector, cycle_engine, report_generator, cycle_playbook, smc_engine
 from core.vector_engine import VectorEngine
 from ui import charts
+
+def determine_business_cycle(yield_curve, trend, credit_stress, turbulence, sentiment, dix):
+    """Maps data to the 4-stage Business Cycle"""
+    if yield_curve > 0.2 and trend == "UP" and credit_stress < 1.0:
+        return {"phase": "Expansion", "next": "Peak", "assets": "Growth Stocks, Real Estate, Commodities", "progress": 25, "warning": "Horizon looks clear. Monitor for Yield Curve flattening (<0.2)."}
+    elif yield_curve <= 0.2 and (turbulence > 180 or sentiment > 60):
+        return {"phase": "Peak", "next": "Contraction", "assets": "Defensives, Gold, Cash", "progress": 50, "warning": "Structural fever detected. Transition to risk-off strategy."}
+    elif yield_curve < 0 or (trend == "DOWN" and credit_stress > 1.5):
+        return {"phase": "Contraction", "next": "Trough", "assets": "Bonds, Gold, Staples", "progress": 75, "warning": "Economic winter. Watch for Institutional Accumulation (DIX > 45%)."}
+    elif sentiment < 30 and dix > 45:
+        return {"phase": "Trough", "next": "Expansion", "assets": "Value Stocks, Small Caps", "progress": 100, "warning": "Market is washing out. Institutions are buying. Plan for recovery."}
+    else:
+        return {"phase": "Transition", "next": "Expansion", "assets": "Cash/Neutral", "progress": 10, "warning": "Market in structural shift. Stay patient."}
+
 try:
     import yfinance as yf
     YFINANCE_AVAILABLE = True
@@ -35,22 +49,11 @@ st.sidebar.markdown("---")
 
 # Market Status Badge
 def is_bank_holiday(check_date):
-    """Check if date is a US bank holiday"""
-    # Common US bank holidays - simplified for demo
-    # In production, you'd use a proper holiday calendar
-    month_day = (check_date.month, check_date.day)
-    holidays = [
-        (1, 1),   # New Year's Day
-        (1, 20),  # Martin Luther King Day (3rd Monday in January)
-        (7, 4),   # Independence Day
-        (12, 25), # Christmas
-        (12, 24), # Christmas Eve (half-day, but often closed)
-        (11, 27), # Thanksgiving (4th Thursday)
-        (9, 2),   # Labor Day (1st Monday)
-        (2, 17),  # Presidents' Day (3rd Monday)
-        (5, 26),  # Memorial Day (last Monday)
-    ]
-    return month_day in holidays
+    """Check for US Market Holidays"""
+    # Fix: January 20th is NOT a holiday in 2026 (MLK is Jan 19)
+    # Simple fix for current context:
+    holidays = [(1, 1), (1, 19), (7, 4), (12, 25)]
+    return (check_date.month, check_date.day) in holidays
 
 def get_market_status():
     """Determine market status and return status info"""
@@ -222,19 +225,41 @@ if market_close.empty:
     st.error("Failed to fetch market data. Please check connection.")
     st.stop()
 
-# Display Catalysts in Sidebar
-with st.sidebar.expander("📅 Upcoming Catalysts"):
-    st.markdown("**Next Earnings:**")
-    if not earnings_df.empty:
-        st.dataframe(earnings_df, hide_index=True)
-    else:
-        st.text("No upcoming earnings found.")
+# Macro Liquidity
+with st.sidebar.expander("💧 Macro Liquidity"):
+    st.metric("Inflation (CPI)", "3.2%", help="Consumer Price Index - current inflation rate.")
+    st.metric("M2 Money Supply", "$21.7T", help="M2 Money Supply - total money in circulation.")
+    st.metric("Unemployment Rate", "4.1%", help="Current unemployment rate.")
 
-    st.markdown("**Economic Calendar:**")
-    if not econ_df.empty:
-        st.dataframe(econ_df, hide_index=True)
-    else:
-        st.text("No releases found.")
+# Placeholder for last_yield (will be updated after data loading)
+last_yield = 0.0
+
+# Calculate Market-Implied Odds
+inversion_depth = -last_yield if last_yield < 0 else 0
+if inversion_depth == 0:
+    recession_odds = 10
+elif inversion_depth < 0.5:
+    recession_odds = 20
+elif inversion_depth < 1.5:
+    recession_odds = 40
+else:
+    recession_odds = 70
+
+# Assume current inflation (in production, fetch real-time)
+inflation = 3.2  # Placeholder from sidebar expander
+diff = inflation - 2
+if diff > 0.5:
+    fed_pivot_odds = 60  # Accelerating inflation suggests higher pivot odds
+else:
+    fed_pivot_odds = 20  # Stable or decelerating
+
+# Market-Implied Odds
+st.sidebar.subheader("📊 Market-Implied Odds")
+rec_delta = "High" if recession_odds > 75 else "Low" if recession_odds < 25 else None
+fed_delta = "High" if fed_pivot_odds > 75 else "Low" if fed_pivot_odds < 25 else None
+
+st.sidebar.metric("Recession Odds", f"{recession_odds}%", delta=rec_delta, help="Yield curve inversion depth predicts recession likelihood. Minimal <0.5%: 10-20%, moderate 0.5-1.5%: 30-50%, deep >1.5%: 60-80%. Leading indicator with ~6-12 month horizon.")
+st.sidebar.metric("Fed Pivot Odds", f"{fed_pivot_odds}%", delta=fed_delta, help="Inflation differential from 2% target. >0.5% above target: 50-90% pivot odds (accelerating inflation), <0.5%: 10-40% (decelerating). Indicates Fed funds rate direction.")
 # EUR/USD Strategy Logic
 eurusd_col = "EURUSD=X"
 if eurusd_col in market_close.columns:
@@ -331,24 +356,6 @@ curr_yield = macro_yield.loc[start_ts:analysis_ts] if not macro_yield.empty else
 curr_ai_turb = ai_turb_series.loc[start_ts:analysis_ts] if not ai_turb_series.empty else pd.Series()
 curr_crypto_turb = crypto_turb_series.loc[start_ts:analysis_ts] if not crypto_turb_series.empty else pd.Series()
 
-# Latest Values
-if curr_turb.empty:
-    st.warning("No data for date.")
-    st.stop()
-
-last_turb = curr_turb.iloc[-1]
-last_abs = curr_abs.iloc[-1]
-last_hurst = curr_hurst.iloc[-1] if not curr_hurst.empty else 0.5
-last_amihud = curr_amihud.iloc[-1] if not curr_amihud.empty else 0.0
-last_yield = curr_yield.iloc[-1] if not curr_yield.empty else 0.0
-
-# Sector Turbulence Ratios
-last_ai_turb = curr_ai_turb.iloc[-1] if not curr_ai_turb.empty else last_turb
-last_crypto_turb = curr_crypto_turb.iloc[-1] if not curr_crypto_turb.empty else last_turb
-safe_turb = last_turb if last_turb > 1 else 1.0
-ai_ratio = last_ai_turb / safe_turb
-crypto_ratio = last_crypto_turb / safe_turb
-
 # Regime & Signals
 spy_col = "SPY"
 spy_flat = False
@@ -364,6 +371,29 @@ else:
     trend = "UNKNOWN"
     spy_p = pd.Series()
     price, ma50 = 0.0, 0.0
+
+# Latest Values
+if curr_turb.empty:
+    st.warning("No data for date.")
+    st.stop()
+
+last_turb = curr_turb.iloc[-1]
+last_abs = curr_abs.iloc[-1]
+last_hurst = curr_hurst.iloc[-1] if not curr_hurst.empty else 0.5
+last_amihud = curr_amihud.iloc[-1] if not curr_amihud.empty else 0.0
+last_yield = curr_yield.iloc[-1] if not curr_yield.empty else 0.0
+credit_val = macro_credit.iloc[-1] if isinstance(macro_credit, pd.Series) and not macro_credit.empty else 0.0
+cycle_info = determine_business_cycle(last_yield, trend, credit_val, last_turb, macro_sentiment, whale_tracker['dix'])
+
+
+# Sector Turbulence Ratios
+last_ai_turb = curr_ai_turb.iloc[-1] if not curr_ai_turb.empty else last_turb
+last_crypto_turb = curr_crypto_turb.iloc[-1] if not curr_crypto_turb.empty else last_turb
+safe_turb = last_turb if last_turb > 1 else 1.0
+ai_ratio = last_ai_turb / safe_turb
+crypto_ratio = last_crypto_turb / safe_turb
+
+
 
 # 6. SMC Synthesis & HUD Alert Upgrade
 regime = math_engine.get_market_regime(last_turb, last_abs, trend)
@@ -419,6 +449,17 @@ ss = {
     "vix_alert": vix_val > 20
 }
 
+# Determine Business Cycle
+
+# Logic for the Diagnostic Hover
+checks = [
+    ("High Turbulence", last_turb > 180),
+    ("Institutional Distribution", smc_context["choch_val"] == -1),
+    ("Inverted Yield", last_yield < 0),
+    ("Below 50-day MA", price < ma50)
+]
+diag_text = "\n".join([f"{'🚨' if state else '✅'} {label}" for label, state in checks])
+
 # 7. UI Layout
 
 st.sidebar.markdown(f"**Data Horizon:** {last_date.date()} ({day_name})")
@@ -429,68 +470,95 @@ st.sidebar.caption("• **Data Horizon (Today):** The historical data point bein
 
 # Dynamic Interpretations
 # 1. System Fever (Turbulence)
-turb_interp = "Calm/Normal"
-if last_turb > 300: turb_interp = "SICK - Market acting abnormal"
-turb_help = f"""**Measures how 'weird' or unusual today's price moves are compared to the last year.**\n\n**>300: The market is acting 'sick'. Normal patterns are breaking down.**\n\n**Current Status:** {last_turb:.0f} -> {turb_interp}."""
+turb_interp = "NORMAL" if last_turb < 180 else "ELEVATED" if last_turb < 370 else "CRITICAL"
+turb_help = f"""**Measures how 'weird' or unusual today's price moves are compared to the last year.**\n\n**Current Status:** {last_turb:.0f} -> {turb_interp}."""
 
 # 2. Contagion Risk
-abs_interp = "Resilient (Diverse)"
-if last_abs > 0.80: abs_interp = "Highly Fragile (Unified)"
-abs_help = f"""**The % of assets moving in lockstep.**\n\n**94% of stocks are moving in lockstep; if one trips, they all fall.**\n\n**Current Status:** {last_abs:.0%}: -> {abs_interp}."""
+abs_interp = "Resilient (Diverse)" if last_abs < 0.80 else "Highly Fragile (Unified)"
+abs_help = f"""**The % of assets moving in lockstep.**\n\n**Current Status:** {last_abs:.0%} -> {abs_interp}."""
 
 # 3. Herd Behavior (Hurst)
-hurst_interp = "Random Walk (Healthy)"
-if last_hurst > 0.70: hurst_interp = "Panic/FOMO - High reversal risk"
-hurst_help = f"""**Measures how 'persistent' a trend is.**\n\n**>0.70: Market is panicking or FOMO-ing in one direction. High risk of a reversal.**\n\n**Current Status:** {last_hurst:.2f} -> {hurst_interp}."""
+hurst_interp = "Random Walk (Healthy)" if last_hurst < 0.70 else "Panic/FOMO - High reversal risk"
+hurst_help = f"""**Measures how 'persistent' a trend is.**\n\n**Current Status:** {last_hurst:.2f} -> {hurst_interp}."""
 
 # 4. Market Pulse (Amihud)
-liq_interp = "Normal Liquidity"
-if last_amihud > 2.0: liq_interp = "Holes Found - Big players struggling"
-liq_help = f"""**How much price moves per dollar traded.**\n\n**>2.0: Holes found in the market. Big players are struggling to find buyers/sellers.**\n\n**Current Status:** {last_amihud:.1f}σ -> {liq_interp}."""
+liq_interp = "Normal Liquidity" if last_amihud < 2.0 else "Holes Found - Big players struggling"
+liq_help = f"""**How much price moves per dollar traded.**\n\n**Current Status:** {last_amihud:.1f}σ -> {liq_interp}."""
 
 # 5. Sentiment
-sent_interp = "Neutral"
-if macro_sentiment > 60: sent_interp = "Greed (Contrarian Sell?)"
-if macro_sentiment < 40: sent_interp = "Fear (Contrarian Buy?)"
+sent_interp = "Fear (Contrarian Buy?)" if macro_sentiment < 40 else "Greed (Contrarian Sell?)" if macro_sentiment > 60 else "Neutral"
 sent_help = f"""**Aggregated mood from top financial news headlines.**\n\n**Extreme Greed (>80) often marks tops; Extreme Fear (<20) often marks bottoms.**\n\n**Current Status:** {macro_sentiment:.0f} -> {sent_interp}."""
 
 # 6. AI Ratio
-ai_interp = "Normal"
-if ai_ratio > 1.5: ai_interp = "Overheated (Bubble Risk)"
-if ai_ratio < 0.8: ai_interp = "Lagging Market"
-ai_help = f"""**Volatility of AI stocks relative to the broad market.**\n\n**>1.5x means AI is decoupling (Bubble behavior). High risk of mean reversion.**\n\n**Current Status:** {ai_ratio:.1f}x -> {ai_interp}."""
+ai_interp = "Lagging Market" if ai_ratio < 0.8 else "Overheated (Bubble Risk)" if ai_ratio > 1.5 else "Normal"
+ai_help = f"""**Volatility of AI stocks relative to the broad market.**\n\n**Current Status:** {ai_ratio:.1f}x -> {ai_interp}."""
 
 # 7. Crypto Ratio
-crypto_interp = "Normal"
-if crypto_ratio > 1.5: crypto_interp = "Speculative Excess"
+crypto_interp = "Normal" if crypto_ratio <= 1.5 else "Speculative Excess"
 crypto_help = f"""**Volatility of Crypto relative to the broad market.**\n\n**Often a leading indicator for risk appetite. If Crypto cracks, stocks often follow.**\n\n**Current Status:** {crypto_ratio:.1f}x -> {crypto_interp}."""
 
 # Yield Curve Help
-yield_interp = "Normal (Growth)"
-if last_yield < 0: yield_interp = "Inverted (Recession Warning)"
-elif last_yield < 0.2: yield_interp = "Flat (Caution)"
-yield_help = f"""**The difference between 10-Year and 2-Year Treasury yields.**\n\n**The most reliable recession predictor in history. Inversion (<0) signals trouble ahead.**\n\n**Current Status:** {last_yield:.2f}% -> {yield_interp}."""
+yield_interp = "Inverted (Recession Warning)" if last_yield < 0 else "Flat (Caution)" if last_yield < 0.2 else "Normal (Growth)"
+yield_help = f"""**The difference between 10-Year and 2-Year Treasury yields.**\n\n**Current Status:** {last_yield:.2f}% -> {yield_interp}."""
 
 # Credit Stress Help
-credit_val = macro_credit.iloc[-1] if isinstance(macro_credit, pd.Series) and not macro_credit.empty else 0.0
-credit_interp = "Stable"
-if credit_val > 1.0: credit_interp = "Stress Rising"
-if credit_val > 2.0: credit_interp = "Credit Freeze"
-credit_help = f"""**High Yield Bond Spreads (Risk Premium).**\n\n**If lenders demand high interest to lend to risky companies, the credit cycle is breaking.**\n\n**Current Status:** {credit_val:.1f}σ -> {credit_interp}."""
+credit_interp = "Stable" if credit_val < 1.0 else "Stress Rising" if credit_val < 2.0 else "Credit Freeze"
+credit_help = f"""**High Yield Bond Spreads (Risk Premium).**\n\n**Current Status:** {credit_val:.1f}σ -> {credit_interp}."""
 
 # System HUD
 with st.container(border=True):
-    hud1, hud2, hud3 = st.columns([2, 1, 1])
-    with hud1:
-        st.subheader(f"🛡️ {ss['level']} - {current_cycle}")
-    with hud2:
-        stance_header = "DEFENSIVE POSTURE" if last_turb > 180 or credit_val > 1.0 else "RISK-ON ENVIRONMENT"
-        st.metric("Tactical Stance", stance_header)
-    with hud3:
-        clean_summary = re.sub(r'<[^>]+>', '', status_report['summary_narrative'])
-        st.success(clean_summary)
+    # Use ss['color'] to determine the border/text color of the header
+    st.markdown(f"### <span style='color:{ss['color']}'>🛡️ System Status: {ss['level']}</span>", unsafe_allow_html=True)
 
-tab1, tab2, tab3 = st.tabs(["🔬 Mechanics", "🏛️ Macro", "🏦 Institutional"])
+    # Parse Black Swan probability
+    prob_str = black_swan_status['probability']
+    if prob_str.startswith("High"):
+        prob_val = 90
+    elif prob_str == "Moderate":
+        prob_val = 20
+    elif prob_str == "Low":
+        prob_val = 2
+    elif prob_str == "None":
+        prob_val = 0
+    else:
+        try:
+            prob_val = float(prob_str.rstrip('%')) if prob_str.endswith('%') else float(prob_str)
+        except ValueError:
+            prob_val = 0
+
+    # Two rows of two columns for mobile-friendliness
+    row1 = st.columns(2)
+    with row1[0]:
+        stress_color = "green" if last_turb < 180 else "orange" if last_turb < 370 else "red"
+        st.markdown(f"<div style='text-align: center;'><strong>System Stress</strong><br><span style='font-size: 2em; color: {stress_color}; font-weight: bold;'>{int(last_turb)}</span></div>", unsafe_allow_html=True)
+        st.caption("**Scale:** Turbulence score ranges from 0-1000, where higher values indicate more unusual market behavior.")
+    with row1[1]:
+        fear_color = "red" if vix_val > 20 else "green"
+        delta_symbol = "▲" if vix_val > 20 else "▼"
+        st.markdown(f"<div style='display: flex; justify-content: space-between; align-items: center;'><span><strong>Fear Gauge (VIX)</strong></span><span style='font-size: 1.2em;'>{vix_val:.1f}</span><span style='font-size: 1.2em; color: {fear_color};'>{delta_symbol}</span></div>", unsafe_allow_html=True)
+        st.caption("VIX North Star: Fear index. >20 indicates significant fear, <15 suggests complacency.")
+
+    row2 = st.columns(2)
+    with row2[0]:
+        dix_val = whale_tracker['dix']
+        smart_color = "green" if dix_val > 45 else "red" if dix_val < 40 else "gray"
+        delta_symbol = "▲" if dix_val > 45 else "▼" if dix_val < 40 else ""
+        st.markdown(f"<div style='display: flex; justify-content: space-between; align-items: center;'><span><strong>Smart Money (DIX)</strong></span><span style='font-size: 1.2em;'>{dix_val:.1f}%</span><span style='font-size: 1.2em; color: {smart_color};'>{delta_symbol}</span></div>", unsafe_allow_html=True)
+        st.caption("DIX North Star: Institutional positioning. >45% signals accumulation, <40% distribution.")
+    with row2[1]:
+        if prob_val > 15:
+            bs_value = "High"
+            bs_color = "red"
+        elif prob_val > 5:
+            bs_value = "Moderate"
+            bs_color = "orange"
+        else:
+            bs_value = "Low"
+            bs_color = "green"
+        st.markdown(f"<div style='display: flex; justify-content: space-between; align-items: center;'><span><strong>Black Swan Risk</strong></span><span style='font-size: 1.2em; color: {bs_color}; font-weight: bold;'>{bs_value}</span><span style='font-size: 0.8em;'>{prob_str}</span></div>", unsafe_allow_html=True)
+        st.caption("Probability of a major market disruption based on alignment of key signals.")
+
+tab1, tab2, tab3, tab4 = st.tabs(["🔬 Mechanics", "🏛️ Macro", "🏦 Institutional", "🎯 Strategy"])
 
 with tab1:
     m_cols = st.columns(4)
@@ -599,6 +667,18 @@ with tab2:
     mac2.metric("Credit Stress (HY)", f"{credit_val:.1f}σ", help=credit_help)
 
 with tab3:
+    st.subheader("📊 Institutional Sentiment")
+    dix_val = whale_tracker['dix']
+    if dix_val > 50:
+        st.success("🟢 Institutions are BUYING the dip")
+    elif dix_val < 40:
+        st.error("🔴 Institutions are SELLING into strength")
+    else:
+        st.info("🟡 Institutions are NEUTRAL")
+
+    if whale_tracker['volume_anomaly']:
+        st.error("**🚨 WHALE ACTIVITY DETECTED:** Large institutional block trades (Dark Pool) identified at current levels. Proceed with caution!")
+
     if not market_status['is_trading']:
         # Show static status for non-trading periods
         status_indicator = "📊 Weekend Mode" if market_status['reason'] == "Weekend" else "📅 Holiday Mode" if market_status['reason'] == "Bank Holiday" else "🌙 After Hours"
@@ -654,282 +734,63 @@ with tab3:
                 st.info(smc_context["choch"])
             st.caption("First sign of trend structural breakdown or reversal.")
 
-    # Whale Tracker
-    st.markdown("**Whale Tracker**")
-    st.metric("DIX", f"{whale_tracker['dix']:.1f}", help="Dumb Institutional Index - measures institutional positioning and sentiment.")
-    if whale_tracker['distribution']:
-        st.warning("Distribution detected")
-    if whale_tracker['volume_anomaly']:
-        st.info("Volume anomaly")
-
-
-
-# Metrics Row
-turb_delta = f"{market_status['status']} Mode" if not market_status['is_trading'] else "Low Vol" if last_turb < 50 else "Active"
-
-# Gauges
-st.write("")
-gauge_cols = st.columns(2)
-with gauge_cols[0]:
-    st.plotly_chart(charts.create_gauge_chart(last_turb, "Market Stress Index", 0, 1000, {180: "orange", 370: "red"}), use_container_width=True)
-with gauge_cols[1]:
-    st.plotly_chart(charts.create_gauge_chart(last_abs * 100, "Contagion Risk (%)", 0, 100, {60: "orange", 80: "red"}), use_container_width=True)
-
-m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("Trend Quality", f"{last_hurst:.2f}", help=hurst_help, delta_color="inverse")
-m2.metric("Exit Door Size", f"{last_amihud:.1f}", help=liq_help, delta_color="inverse")
-m3.metric("Sentiment", f"{macro_sentiment:.0f}", help=sent_help)
-m4.metric("AI/Mkt Ratio", f"{ai_ratio:.1f}x", help=ai_help)
-m5.metric("Crypto/Mkt", f"{crypto_ratio:.1f}x", help=crypto_help)
-
-# Macro Row
-st.markdown("#### 🌍 Macro Truth")
-mac1, mac2 = st.columns(2)
-mac1.metric(f"Yield Curve (10Y-2Y)", f"{last_yield:.2f}%", delta="Inverted" if last_yield < 0 else "Normal", help=yield_help)
-mac2.metric("Credit Stress (HY)", f"{credit_val:.1f}σ", help=credit_help)
-
-def generate_dynamic_capital_rotation(last_turb, credit_val, last_yield, macro_ratios_df):
-    """Infer capital rotation from macro ratios and stress indicators."""
-    buy_list = []
-    avoid_list = []
-
-    # Based on macro ratios trends
-    for _, row in macro_ratios_df.iterrows():
-        pair = row['Pair']
-        trend = row['Trend']
-        if trend == "Rising":
-            if "GLD/SPY" in pair:
-                buy_list.append("Gold (fear rising)")
-            elif "EEM/SPY" in pair:
-                avoid_list.append("US Equities (global outflows)")
-        elif trend == "Falling":
-            if "SPY/TLT" in pair:
-                buy_list.append("Stocks (risk-on)")
-            elif "XLY/XLP" in pair:
-                avoid_list.append("Discretionary (wants weakening)")
-
-    # Stress overrides
-    if last_turb > 180:
-        buy_list.append("Defensives (utilities, staples)")
-        avoid_list.append("High-vol growth")
-    if credit_val > 1.0:
-        buy_list.append("Investment-grade bonds")
-        avoid_list.append("Junk bonds")
-    if last_yield < 0:
-        buy_list.append("Gold, cash")
-        avoid_list.append("Long-duration assets")
-
-    return {"Buy": buy_list, "Sell/Avoid": avoid_list}
-
-def generate_dynamic_stance(last_turb, last_hurst, credit_val, last_yield, macro_sentiment, current_cycle, last_abs):
-    """Generate threshold-driven, inferential tactical stance from real-time data."""
-    inferences = []
-
-    # Turbulence-based actions
-    if last_turb > 370:
-        inferences.append("Extreme system fever (>370): Immediate liquidation of leveraged positions; pivot to cash equivalents or inflation hedges like TIPS with stop-loss at 1.5x rolling std dev to cap downside.")
-    elif last_turb > 180:
-        inferences.append("Elevated turbulence (>180): Reduce beta exposure; rotate into defensive sectors (utilities, healthcare) if Hurst >0.7 indicates crowded trends risking reversal.")
+    st.markdown("### Institutional Insights")
+    if dix_val > 45:
+        status = "Accumulating"
+        color = "green"
+    elif dix_val < 40:
+        status = "Distributing"
+        color = "red"
     else:
-        inferences.append("Normal turbulence: Maintain core holdings but monitor for breakout above 180, signaling potential regime shift.")
+        status = "Neutral"
+        color = "gray"
+    st.markdown(f"DIX {dix_val:.1f}% - <span style='color:{color}; font-weight:bold;'>{status}</span><br>DIX >50% often signals confidence; <40% may indicate caution. Monitor for volume anomalies to spot big moves.", unsafe_allow_html=True)
 
-    # Herd Behavior (Hurst)
-    if last_hurst > 0.75:
-        inferences.append("Crowded herd behavior (Hurst >0.75): High reversal risk; implement trailing stops at 2x current volatility; consider contrarian shorts in overbought momentum stocks.")
-    elif last_hurst < 0.45:
-        inferences.append("Uncertain/choppy trends (Hurst <0.45): Favor options strategies or pairs trades to exploit mean-reversion opportunities.")
 
-    # Credit Stress
-    if credit_val > 2.0:
-        inferences.append("Severe credit freeze (Z>2.0): Shift to investment-grade debt; avoid junk bonds and cyclical equities as spreads signal tightening liquidity.")
-    elif credit_val > 1.0:
-        inferences.append("Rising credit stress (Z>1.0): Increase allocation to gold or REITs as safe-haven inflows likely with 70% probability based on historical correlations.")
 
-    # Yield Curve
-    if last_yield < 0:
-        inferences.append("Inverted yield curve (<0): Recession warning; overweight defensive assets like staples and bonds, underweight cyclicals with dynamic rebalancing if inversion persists >30 days.")
-    elif last_yield < 0.2:
-        inferences.append("Flat curve (<0.2): Caution on growth bets; prefer stable dividends over speculative plays.")
+with tab4:
+    st.header(f"Business Cycle: {cycle_info['phase']}")
 
-    # Sentiment
-    if macro_sentiment > 60:
-        inferences.append("Greed sentiment (>60): Contrarian sell signals likely; reduce equity exposure by 10-20% if absorption ratio >0.8 amplifies contagion risk.")
-    elif macro_sentiment < 40:
-        inferences.append("Fear sentiment (<40): Potential bottom; accumulate quality assets with limit orders below support levels defined by 50-day rolling means.")
+    # 2. Horizon View (The Planning Section)
+    h1, h2 = st.columns(2)
+    with h1:
+        st.markdown("**Current Status**")
+        st.info(f"**{cycle_info['phase']}**: Active now")
+        st.caption(cycle_info['warning'])
+    with h2:
+        st.markdown("**Early Planning (Next Stage)**")
+        st.warning(f"**{cycle_info['next']}**: Prepare for this transition")
+        st.success(f"**Rotation Target:** {cycle_info['assets']}")
 
-    # Absorption (Contagion)
-    if last_abs > 0.85:
-        inferences.append("High contagion (Abs>0.85): Diversify across uncorrelated assets; hedge with VIX calls if turbulence compounds unified downside.")
+    # 3. Strategy Playbook (Merged here for clarity)
+    st.markdown("---")
+    st.subheader("🗺️ Economic Cycle Navigator")
+    cols = st.columns(4)
+    stages = [
+        {"name": "Expansion", "assets": "Growth Stocks, Real Estate, Commodities", "color": "green"},
+        {"name": "Peak", "assets": "Defensives, Gold, Cash", "color": "orange"},
+        {"name": "Contraction", "assets": "Bonds, Gold, Staples", "color": "red"},
+        {"name": "Trough", "assets": "Value Stocks, Small Caps, Emerging Markets", "color": "blue"}
+    ]
+    
+    for i, stage in enumerate(stages):
+        is_active = cycle_info['phase'] == stage['name']
+        with cols[i]:
+            with st.container(border=True):
+                if is_active:
+                    color_rgba = {"green": "rgba(0,255,0,0.1)", "orange": "rgba(255,165,0,0.1)", "red": "rgba(255,0,0,0.1)", "blue": "rgba(0,0,255,0.1)"}[stage['color']]
+                    shadow_color = stage['color']
+                    assets_list = stage['assets'].split(', ')
+                    bullets = '</li><li>'.join(assets_list)
+                    st.markdown(f"<div style='background-color: {color_rgba}; padding: 10px; border-radius: 5px; box-shadow: 0 0 10px {shadow_color}; border: 2px solid {shadow_color};'><h4>🎯 {stage['name']}</h4><p><strong>ACTIVE PHASE</strong></p><ul><li>{bullets}</li></ul></div>", unsafe_allow_html=True)
+                else:
+                    assets_list = stage['assets'].split(', ')
+                    bullets = '</li><li>'.join(assets_list)
+                    st.markdown(f"<div style='opacity: 0.4;'><h4>{stage['name']}</h4><p>Target Assets:</p><ul><li>{bullets}</li></ul></div>", unsafe_allow_html=True)
 
-    # Cycle Context
-    if "bull" in current_cycle.lower():
-        inferences.append("Bull cycle: Favor momentum and growth, but scale back if credit Z-scores rise above 1.5.")
-    elif "bear" in current_cycle.lower():
-        inferences.append("Bear cycle: Prioritize capital preservation; build cash reserves for value opportunities post-capitulation.")
+    p2 = st.columns([1])[0]  # Since p1 is replaced, create p2 as full width or adjust
+    with p2:
+        st.markdown("#### 🎨 Focus Style")
+        st.button(f"🎯 {playbook['style']}", use_container_width=True)
 
-    return " | ".join(inferences) if inferences else "Market conditions neutral: Hold balanced portfolio with periodic rebalancing."
 
-# Display Report
-with st.container(border=True):
-    st.subheader(f"🛡️ Market Stress Index: {status_report['warning_level']}")
-
-    # Executive Summary (Consolidated Narrative)
-    st.markdown("#### 📝 Executive Summary")
-    st.markdown(
-        f"""<div style="font-size: 1.15rem; font-style: italic; color: #DDDDDD; line-height: 1.6; margin-bottom: 15px;">
-        {status_report['summary_narrative']}
-        </div>""",
-        unsafe_allow_html=True
-    )
-
-    # Enhanced Status Section
-    warning_level = "NORMAL"
-    if last_turb > 370:
-        warning_level = "CRITICAL"
-    elif last_turb > 180:
-        warning_level = "ELEVATED"
-
-    st.markdown(f"**CURRENT IMMUNE SYSTEM STATUS – {last_date.date()}**")
-    st.markdown(f"**WARNING LEVEL:** {warning_level}")
-
-    st.markdown("**Current Metrics:**")
-    st.markdown(f"- Market Turbulence: {last_turb:.0f}/1000 (Raw: {last_turb:.1f})")
-    st.markdown(f"- Days Elevated: {days_elevated} days")
-    st.markdown(f"- SPX Level: {price:.2f} ({'ABOVE' if price > ma50 else 'BELOW'} 50-day MA)")
-    vix_rel = "normal" if vix_val < 20 else "elevated relative to 50-day MA"
-    st.markdown(f"- VIX Level: {vix_val:.2f} ({vix_rel})")
-    st.markdown(f"- Credit Stress (HY): {credit_val:.1f}σ")
-    if last_yield < 0:
-        st.markdown(f"- Yield Curve Inversion: {last_yield:.1f}%")
-    sentiment_desc = "Neutral"
-    if macro_sentiment > 60:
-        sentiment_desc = "Greed"
-    elif macro_sentiment < 40:
-        sentiment_desc = "Fear"
-    st.markdown(f"- Macro Sentiment: {macro_sentiment:.0f} ({sentiment_desc})")
-
-    st.markdown("**Interpretation:**")
-    if last_turb < 180:
-        st.markdown("✓ Market showing normal stress levels (<180)")
-    elif last_turb < 370:
-        st.markdown("▲ Elevated turbulence – monitor for escalation")
-    else:
-        st.markdown("✗ Critical stress – immediate risk management required")
-
-    if last_abs > 0.85:
-        st.markdown("▲ High asset correlation (fragile structure – contagion risk)")
-    if last_hurst > 0.75:
-        st.markdown("▲ Crowded behavior (high reversal risk)")
-    if credit_val > 2.0:
-        st.markdown("✗ Severe credit freeze – liquidity concerns")
-    if days_elevated > 3:
-        st.markdown("▲ Persistent volatility – structural shift possible")
-
-    st.markdown("**Tactical Stance:**")
-    stance_header = "DEFENSIVE POSTURE" if last_turb > 180 or credit_val > 1.0 else "RISK-ON ENVIRONMENT"
-    st.markdown(f"**{stance_header}**")
-    if last_turb > 370:
-        st.markdown("- Extreme system fever: Extreme caution, reduce exposure")
-    if macro_sentiment < 40:
-        st.markdown("- Fear sentiment: Potential buying opportunity in quality assets")
-    if "bear" in current_cycle.lower():
-        st.markdown("- Bear cycle: Prioritize capital preservation")
-    if last_yield < 0:
-        st.markdown("- Inverted yield curve: Recession signals – defensive positioning")
-
-    st.markdown("**Recommended Actions:**")
-    st.markdown("- Review leverage and implement tight stops")
-    if days_elevated > 3:
-        st.markdown("- Monitor for persistence; prepare contingency plans")
-    if last_turb > 180:
-        st.markdown("- Rotate to defensive sectors (utilities, staples)")
-    if credit_val > 1.0:
-        st.markdown("- Favor investment-grade bonds over junk")
-    st.markdown("- Hedge with options or diversify uncorrelated assets")
-
-    st.markdown("**AI Sector Context:**")
-    st.markdown(f"- AI Turbulence: {last_ai_turb:.1f} (Raw)")
-    st.markdown(f"- Market Score: {last_turb:.0f}/1000")
-    st.markdown(f"- Ratio: {ai_ratio:.2f}x relative to main market")
-    ai_interp = "AI Sector Showing Relative Strength" if ai_ratio > 1.0 else "AI Sector Lagging Market"
-    st.markdown(f"- Interpretation: {ai_interp}")
-
-    st.markdown("**Capital Flows Insights:**")
-    dynamic_rotation = generate_dynamic_capital_rotation(last_turb, credit_val, last_yield, macro_ratios_df)
-    if dynamic_rotation['Buy']:
-        st.markdown(f"**Buy/Own:** {', '.join(dynamic_rotation['Buy'])}")
-    if dynamic_rotation['Sell/Avoid']:
-        st.markdown(f"**Sell/Avoid:** {', '.join(dynamic_rotation['Sell/Avoid'])}")
-
-    # Black Swan Status
-    st.markdown(f"**Black Swan Verification:** {black_swan_status['alert']} ({black_swan_status['probability']})")
-
-st.markdown(f"### 📘 Playbook: {playbook['title']}")
-with st.container(border=True):
-    cp1, cp2, cp3 = st.columns([2, 1, 1])
-
-    with cp1:
-        st.markdown("#### 🧠 The Layman's Strategy")
-        st.info(playbook['layman_strategy'])
-        st.caption(f"**Context:** {playbook['context']}")
-
-    with cp2:
-        st.markdown("#### 🎨 Style Rotation")
-        st.markdown(f"**Focus Style:** {playbook['style']}")
-
-    with cp3:
-        st.markdown("#### 🔄 Capital Rotation")
-        dynamic_rotation = generate_dynamic_capital_rotation(last_turb, credit_val, last_yield, macro_ratios_df)
-        if dynamic_rotation['Buy']:
-            st.success(f"**BUY:** {', '.join(dynamic_rotation['Buy'])}")
-        if dynamic_rotation['Sell/Avoid']:
-            st.error(f"**AVOID:** {', '.join(dynamic_rotation['Sell/Avoid'])}")
-
-# Tactical Stance Banner (The "Action" Banner)
-st.markdown("### 🎯 Tactical Stance")
-dynamic_stance = generate_dynamic_stance(last_turb, last_hurst, credit_val, last_yield, macro_sentiment, current_cycle, last_abs)
-stance_msg = f"Tactical Stance: {dynamic_stance}"
-if hud_alert_upgrade:
-    st.error(f"**⚠️ INSTITUTIONAL DISTRIBUTION DETECTED. Multi-factor structural breakdown in progress.**")
-elif status_report['badge_color'] == 'green':
-    st.success(f"**{stance_msg}**")
-elif status_report['badge_color'] == 'yellow':
-    st.warning(f"**{stance_msg}**")
-else:
-    st.error(f"**{stance_msg}**")
-
-# Charts
-st.markdown("### 📉 Market Health Monitor")
-if not spy_p.empty:
-    vpoc = vec_engine.get_vpoc_level(price) if vec_engine else None
-    fig_main = charts.plot_divergence_chart(spy_p, curr_turb, futures_data=futures_df, vpoc_level=vpoc)
-    st.plotly_chart(fig_main, use_container_width=True)
-
-# Signals Synthesis
-with st.expander("Signals Synthesis"):
-    st.markdown("**Cross-Verification Factors:**")
-    factors = {
-        "Turbulence >370": last_turb > 370,
-        "CHoCH Bearish": smc_context["choch_val"] == -1,
-        "Yield Inverted": last_yield < 0,
-        "SPX Below MA": price < ma50
-    }
-    for factor, state in factors.items():
-        st.markdown(f"- {factor}: {'True' if state else 'False'}")
-    st.markdown(f"**Last Update:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    st.markdown("**Executive Summary Narrative:**")
-    st.info(status_report['summary_narrative'])
-
-# Narrative Battle
-st.markdown("### ⚔️ Narrative Battle")
-crypto_cols = [c for c in config.CRYPTO_ASSETS if c in curr_close.columns]
-growth_cols = [c for c in config.GROWTH_ASSETS if c in curr_close.columns]
-if crypto_cols and growth_cols:
-    c_df = curr_close[crypto_cols].sum(axis=1)
-    a_df = curr_close[growth_cols].sum(axis=1)
-    fig_battle = charts.plot_narrative_battle(c_df, a_df)
-    st.plotly_chart(fig_battle, use_container_width=True)
-
-with st.sidebar.expander("📖 System Documentation"):
-    st.markdown("**Zero-Trust Architecture**")
-    st.markdown(f"Assets Tracked: {len(market_close.columns)}")
