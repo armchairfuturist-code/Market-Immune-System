@@ -11,3 +11,5 @@ numba
 finvizfinance
 nltk
 pytest
+lancedb
+bs4

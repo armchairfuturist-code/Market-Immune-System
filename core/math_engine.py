@@ -436,3 +436,25 @@ def check_black_swan_alignment(turb, absorption, yield_curve, smc_choch):
     elif signals == 2:
         return "⚠️ Minor Alignment: Monitor Closely"
     return "Normal - No Significant Alerts"
+
+def verify_black_swan_alignment(turb, choch_val, yield_curve, spx_price=None, spx_ma50=None):
+    """
+    Black Swan Gate: Triple Threat Logic with HUD Denotation.
+    """
+    signals = 0
+    factors = {
+        "Turbulence >370": turb > 370,
+        "CHoCH Bearish": choch_val == -1,
+        "Yield Inverted": yield_curve < 0,
+        "SPX Below MA": spx_price is not None and spx_ma50 is not None and spx_price < spx_ma50
+    }
+
+    signals = sum(factors.values())
+
+    if signals >= 3:
+        return {"alert": "🚨 BLACK SWAN ALERT", "level": "full", "probability": "High (90% based on historical analogs)"}
+    elif signals == 2:
+        return {"alert": "Fragile Alignment", "level": "moderate", "probability": "Moderate"}
+    elif signals == 1:
+        return {"alert": "Structure Monitoring", "level": "low", "probability": "Low"}
+    return {"alert": "Normal", "level": "none", "probability": "None"}

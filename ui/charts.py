@@ -56,7 +56,7 @@ def create_gauge_chart(value, title, min_val, max_val, thresholds, inverse=False
     
     return fig
 
-def plot_divergence_chart(prices, turbulence, ma_window=50, futures_data=None):
+def plot_divergence_chart(prices, turbulence, ma_window=50, futures_data=None, vpoc_level=None):
     """
     Creates the main Divergence Detector chart.
     Turbulence (Left Axis), Price (Right Axis).
@@ -148,21 +148,40 @@ def plot_divergence_chart(prices, turbulence, ma_window=50, futures_data=None):
 
     # Add Threshold Lines (Left Axis) - Reference Parity
     fig.add_hline(
-        y=config.REGIME_DIVERGENCE_THRESHOLD, 
-        line_dash="dash", 
+        y=config.REGIME_DIVERGENCE_THRESHOLD,
+        line_dash="dash",
         line_color="#F1C40F", # Gold
-        annotation_text=f"Trap Zone ({config.REGIME_DIVERGENCE_THRESHOLD})", 
+        annotation_text=f"Trap Zone ({config.REGIME_DIVERGENCE_THRESHOLD})",
         annotation_position="top left",
         secondary_y=False
     )
     fig.add_hline(
-        y=config.REGIME_TURBULENCE_CRASH, 
-        line_dash="dash", 
+        y=config.REGIME_TURBULENCE_CRASH,
+        line_dash="dash",
         line_color="#E74C3C", # Red
-        annotation_text=f"CRASH Level ({config.REGIME_TURBULENCE_CRASH})", 
+        annotation_text=f"CRASH Level ({config.REGIME_TURBULENCE_CRASH})",
         annotation_position="top left",
         secondary_y=False
     )
+
+    # Add VPOC/MPL Line
+    if vpoc_level is not None:
+        fig.add_hline(
+            y=vpoc_level,
+            line_dash="solid",
+            line_color="gold",
+            line_width=3,
+            annotation_text=f"VPOC/MPL ({vpoc_level:.0f}) - Institutional Magnet",
+            annotation_position="bottom right",
+            secondary_y=True
+        )
+        # Shaded zone ±5 points
+        fig.add_hrect(
+            y0=vpoc_level - 5, y1=vpoc_level + 5,
+            fillcolor="gold", opacity=0.1,
+            layer="below", line_width=0,
+            secondary_y=True
+        )
     
     # Add Green Shading (VRects)
     is_active = False
@@ -201,7 +220,7 @@ def plot_divergence_chart(prices, turbulence, ma_window=50, futures_data=None):
     )
     
     # Left Axis: Stress Index
-    fig.update_yaxes(title_text="Market Stress Index", secondary_y=False, showgrid=True, gridcolor="#333", range=[0, 650])
+    fig.update_yaxes(title_text="Market Stress Index", secondary_y=False, showgrid=True, gridcolor="#333", range=[20, 920])
     # Right Axis: Price
     fig.update_yaxes(title_text="SPX Level", secondary_y=True, showgrid=False)
     

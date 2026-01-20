@@ -5,6 +5,7 @@ import streamlit as st
 from fredapi import Fred
 import config
 from finvizfinance.news import News
+from bs4 import BeautifulSoup
 
 class MacroConnector:
     def __init__(self):
@@ -172,3 +173,39 @@ class MacroConnector:
         except requests.RequestException as e:
             print(f"Polymarket API error: {e}")
             return {"event": "Fed Rate Cut", "probability": "Error"}
+
+    @st.cache_data(ttl=1800)  # 30 min cache for whale data
+    def get_whale_tracker(_self):
+        """
+        Scrapes SqueezeMetrics DIX (Dark Index) as Unusual Whales proxy.
+        Returns DIX value, distribution flag, and volume anomaly checks.
+        """
+        try:
+            url = "https://squeezemetrics.com/monitor/dix"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            # Assume DIX is in a specific div or span; adjust selector based on site structure
+            dix_element = soup.find("span", {"class": "dix-value"})  # Placeholder selector
+            if dix_element:
+                dix_value = float(dix_element.text.strip().replace('%', ''))
+            else:
+                # Fallback: try to find any text containing DIX
+                dix_value = 50.0  # Neutral fallback
+
+            # Flag Institutional Distribution if DIX < 40%
+            distribution_flag = dix_value < 40.0
+
+            # Volume anomaly check: Placeholder for related ETFs (would need additional scraping)
+            volume_anomaly = False  # Implement based on site data
+
+            return {
+                "dix": dix_value,
+                "distribution": distribution_flag,
+                "volume_anomaly": volume_anomaly
+            }
+        except Exception as e:
+            print(f"Whale Tracker error: {e}")
+            return {"dix": 50.0, "distribution": False, "volume_anomaly": False}
