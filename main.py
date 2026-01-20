@@ -303,6 +303,8 @@ with st.sidebar.expander("💱 Currency Strategy (USD/EUR)"):
     else:
         st.markdown(f"**STRATEGY: {eur_rec}**")
 
+
+
 # 5. Math Engine
 @st.cache_data
 def run_math(df_c, df_h):
@@ -410,7 +412,19 @@ super_signal = math_engine.generate_super_signal(last_amihud, last_hurst, spy_p)
 black_swan_status = math_engine.verify_black_swan_alignment(last_turb, smc_context["choch_val"], last_yield, price, ma50)
 # 6. Report & Context Generation
 vix_val = curr_close["^VIX"].iloc[-1] if "^VIX" in curr_close.columns else 0.0
+divergence_alert = (last_turb > 180) and (vix_val < 20)
 is_divergence = (last_turb > 180) and (trend == "UP")
+
+# Divergence Alert Notice in Sidebar
+if divergence_alert and (not st.session_state.get('divergence_dismissed') or (datetime.datetime.now() - st.session_state['divergence_dismissed']).total_seconds() > 86400):
+    with st.sidebar.expander("⚠️ Divergence Alert Notice", expanded=True):
+        st.write("**Hidden Stress Detected:** Turbulence is rising while VIX remains low, indicating potential early warning for risk-off moves.")
+        st.write("**Risk Mitigation Suggestions:**")
+        st.markdown("- Consider portfolio rebalancing towards defensive assets.")
+        st.markdown("- Monitor for increased volatility.")
+        dismiss = st.checkbox("Dismiss this notice for 24 hours")
+        if dismiss:
+            st.session_state['divergence_dismissed'] = datetime.datetime.now()
 
 days_elevated = 0
 if not curr_turb.empty:
@@ -558,6 +572,13 @@ with st.container(border=True):
         st.markdown(f"<div style='display: flex; justify-content: space-between; align-items: center;'><span><strong>Black Swan Risk</strong></span><span style='font-size: 1.2em; color: {bs_color}; font-weight: bold;'>{bs_value}</span><span style='font-size: 0.8em;'>{prob_str}</span></div>", unsafe_allow_html=True)
         st.caption("Probability of a major market disruption based on alignment of key signals.")
 
+    # Divergence Alert
+    divergence_alert = (last_turb > 180) and (vix_val < 20)
+    if divergence_alert:
+        st.warning("⚠️ **Divergence Alert**: Turbulence > 180 & VIX < 20. Hidden stress detected - early warning active.")
+    else:
+        st.info("✅ No Divergence Alert")
+
 tab1, tab2, tab3, tab4 = st.tabs(["🔬 Mechanics", "🏛️ Macro", "🏦 Institutional", "🎯 Strategy"])
 
 with tab1:
@@ -570,6 +591,68 @@ with tab1:
         vpoc = vec_engine.get_vpoc_level(price) if vec_engine else None
         fig_main = charts.plot_divergence_chart(spy_p, curr_turb, futures_data=futures_df, vpoc_level=vpoc)
         st.plotly_chart(fig_main, use_container_width=True)
+
+    # Sector Stress Gauges
+    st.markdown("### Sector Stress Gauges")
+    gauge_cols = st.columns(3)
+    with gauge_cols[0]:
+        broad_val = int(last_turb)
+        color = "green" if broad_val < 100 else "orange" if broad_val <= 150 else "red"
+        st.markdown(f"<div style='text-align: center;'><strong>Broad Market Stress</strong><br><span style='font-size: 2em; color: {color};'>{broad_val}</span></div>", unsafe_allow_html=True)
+    with gauge_cols[1]:
+        ai_val = int(last_ai_turb)
+        color = "green" if ai_val < 100 else "orange" if ai_val <= 150 else "red"
+        st.markdown(f"<div style='text-align: center;'><strong>AI Sector Stress</strong><br><span style='font-size: 2em; color: {color};'>{ai_val}</span></div>", unsafe_allow_html=True)
+    with gauge_cols[2]:
+        crypto_val = int(last_crypto_turb)
+        color = "green" if crypto_val < 100 else "orange" if crypto_val <= 150 else "red"
+        st.markdown(f"<div style='text-align: center;'><strong>Crypto Sector Stress</strong><br><span style='font-size: 2em; color: {color};'>{crypto_val}</span></div>", unsafe_allow_html=True)
+
+    # Narratives
+    st.markdown("#### Narratives")
+    # AI Narrative
+    ai_tier = "LOW" if ai_ratio <= 1.2 else "MEDIUM" if ai_ratio <= 1.5 else "HIGH"
+    icon = "👍" if ai_tier == "LOW" else "😐" if ai_tier == "MEDIUM" else "⚠️"
+    st.markdown(f"**AI Narrative:** {icon} AI Bubble Risk: {ai_tier}")
+
+    # Crypto Narrative
+    if len(curr_crypto_turb) >= 2:
+        crypto_pct_change = (curr_crypto_turb.iloc[-1] / curr_crypto_turb.iloc[-2] - 1) * 100
+        broad_pct_change = (curr_turb.iloc[-1] / curr_turb.iloc[-2] - 1) * 100
+        if crypto_pct_change > 20 and broad_pct_change <= 0:
+            crypto_status = "BEARISH"
+        else:
+            crypto_status = "NEUTRAL"
+    else:
+        crypto_status = "N/A"
+    st.markdown(f"**Crypto Narrative:** Crypto Leading Indicator: {crypto_status}")
+
+    # Sector Fever Heatmap
+    st.markdown("### Sector Fever Heatmap")
+    heat_cols = st.columns(3)
+
+    def get_trend_and_percentile(series, current_val):
+        if len(series) < 8:
+            return "N/A", "N/A"
+        recent_avg = series.iloc[-8:-1].mean()
+        trend = "Rising" if current_val > recent_avg else "Falling"
+        percentile = (series < current_val).sum() / len(series) * 100
+        top_pct = 100 - percentile
+        rank = f"Top {top_pct:.0f}% Stressed"
+        return trend, rank
+
+    with heat_cols[0]:
+        trend, rank = get_trend_and_percentile(curr_turb, last_turb)
+        emoji = "🔥" if trend == "Rising" else "❄️" if trend == "Falling" else "❓"
+        st.markdown(f"**Broad Market Fever Card**<br>Stress: {last_turb:.0f}<br>7-Day Trend: {trend} {emoji}<br>Historical Rank: {rank}", unsafe_allow_html=True)
+    with heat_cols[1]:
+        trend, rank = get_trend_and_percentile(curr_ai_turb, last_ai_turb)
+        emoji = "🔥" if trend == "Rising" else "❄️" if trend == "Falling" else "❓"
+        st.markdown(f"**AI Chips Fever Card**<br>Stress: {last_ai_turb:.0f}<br>7-Day Trend: {trend} {emoji}<br>Historical Rank: {rank}", unsafe_allow_html=True)
+    with heat_cols[2]:
+        trend, rank = get_trend_and_percentile(curr_crypto_turb, last_crypto_turb)
+        emoji = "🔥" if trend == "Rising" else "❄️" if trend == "Falling" else "❓"
+        st.markdown(f"**Crypto Assets Fever Card**<br>Stress: {last_crypto_turb:.0f}<br>7-Day Trend: {trend} {emoji}<br>Historical Rank: {rank}", unsafe_allow_html=True)
 
 with tab2:
     st.caption("Strategic recommendations based on relative asset flows (20-day trend).")
@@ -655,10 +738,30 @@ with tab2:
 
                     # Winner Logic
                     trend = row['Trend']
+                    pair = row['Pair']
                     if trend == "Rising":
-                        st.markdown(f"<div style='text-align: center; color: #00C853; font-weight: bold;'>Winner: GROWTH</div>", unsafe_allow_html=True)
+                        winner = macro_map[pair]['right'].split(' (')[0]  # e.g., "Stocks"
+                        color = "#00C853"
                     else:
-                        st.markdown(f"<div style='text-align: center; color: #FFAB00; font-weight: bold;'>Winner: SAFETY</div>", unsafe_allow_html=True)
+                        winner = macro_map[pair]['left'].split(' (')[0]  # e.g., "Bonds"
+                        color = "#D32F2F"
+                    st.markdown(f"<div style='text-align: center; color: {color}; font-weight: bold;'>Winner: {winner}</div>", unsafe_allow_html=True)
+
+    # The Economic Gravity
+    st.markdown("### 🌍 The Economic Gravity")
+
+    # M2 Liquidity Wave
+    st.markdown("#### 💧 M2 Liquidity Wave")
+    st.info("M2 Money Supply growth vs. SPY price analysis. (Historical M2 data integration pending - currently using static values)")
+
+    # Yield Curve History
+    st.markdown("#### 📈 Yield Curve History")
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=curr_yield.index, y=curr_yield.values, mode='lines', name='10Y-2Y Spread', line=dict(color='blue')))
+    fig.add_hrect(y0=-10, y1=0, fillcolor="red", opacity=0.2, line_width=0, annotation_text="Inversion Zone", annotation_position="top left")
+    fig.update_layout(title="Yield Curve History (10Y-2Y Spread)", xaxis_title="Date", yaxis_title="Spread (%)")
+    st.plotly_chart(fig)
 
     # Yield Curve and Credit Stress
     st.markdown("#### 🌍 Macro Truth")
