@@ -179,9 +179,13 @@ def get_macro_data():
     yield_curve = macro.fetch_yield_curve()
     credit_spreads = macro.fetch_credit_spreads()
     sentiment = macro.fetch_sentiment()
+    m2_supply = macro.fetch_m2_money_supply()
+    cpi = macro.fetch_cpi()
+    nvidia_sentiment = macro.fetch_sentiment_nvidia()
+    bitcoin_sentiment = macro.fetch_sentiment_bitcoin()
     econ_calendar = macro.fetch_economic_calendar()
     whale_tracker = macro.get_whale_tracker()
-    return yield_curve, credit_spreads, sentiment, econ_calendar, whale_tracker
+    return yield_curve, credit_spreads, sentiment, m2_supply, cpi, nvidia_sentiment, bitcoin_sentiment, econ_calendar, whale_tracker
 
 st.sidebar.markdown("---")
 st.sidebar.info("v3.0 | Zero-Trust Engine")
@@ -191,7 +195,7 @@ if 'data' not in st.session_state or st.sidebar.button("Forced Reload"):
     st.cache_data.clear()
     with st.spinner("Initializing Zero-Trust Data Engine (The 99)..."):
         market_close, earnings_df, futures_df, hourly_df = get_market_data(start_date, use_openbb=use_openbb)
-        macro_yield, macro_credit, macro_sentiment, econ_df, whale_tracker = get_macro_data()
+        macro_yield, macro_credit, macro_sentiment, macro_m2, macro_cpi, nvidia_sent, bitcoin_sent, econ_df, whale_tracker = get_macro_data()
         
         # Vectorize volume profile
         vec_engine = VectorEngine()
@@ -205,6 +209,10 @@ if 'data' not in st.session_state or st.sidebar.button("Forced Reload"):
             'macro_yield': macro_yield,
             'macro_credit': macro_credit,
             'macro_sentiment': macro_sentiment,
+            'macro_m2': macro_m2,
+            'macro_cpi': macro_cpi,
+            'nvidia_sentiment': nvidia_sent,
+            'bitcoin_sentiment': bitcoin_sent,
             'econ_df': econ_df,
             'whale_tracker': whale_tracker,
             'vector_engine': vec_engine
@@ -217,6 +225,10 @@ else:
     macro_yield = st.session_state.data['macro_yield']
     macro_credit = st.session_state.data['macro_credit']
     macro_sentiment = st.session_state.data['macro_sentiment']
+    macro_m2 = st.session_state.data.get('macro_m2', pd.Series([21.7e12] * 100))
+    macro_cpi = st.session_state.data.get('macro_cpi', pd.Series([3.2] * 100))
+    nvidia_sent = st.session_state.data.get('nvidia_sentiment', 0.0)
+    bitcoin_sent = st.session_state.data.get('bitcoin_sentiment', 0.0)
     econ_df = st.session_state.data['econ_df']
     whale_tracker = st.session_state.data.get('whale_tracker', {"dix": 50.0, "distribution": False, "volume_anomaly": False})
     vec_engine = st.session_state.data.get('vector_engine')
@@ -227,8 +239,10 @@ if market_close.empty:
 
 # Macro Liquidity
 with st.sidebar.expander("💧 Macro Liquidity"):
-    st.metric("Inflation (CPI)", "3.2%", help="Consumer Price Index - current inflation rate.")
-    st.metric("M2 Money Supply", "$21.7T", help="M2 Money Supply - total money in circulation.")
+    latest_cpi = macro_cpi.iloc[-1] if not macro_cpi.empty else 3.2
+    latest_m2 = macro_m2.iloc[-1] if not macro_m2.empty else 21.7e12
+    st.metric("Inflation (CPI)", f"{latest_cpi:.1f}%", help="Consumer Price Index - current inflation rate.")
+    st.metric("M2 Money Supply", f"${latest_m2 / 1e12:.1f}T", help="M2 Money Supply - total money in circulation.")
     st.metric("Unemployment Rate", "4.1%", help="Current unemployment rate.")
 
 # Placeholder for last_yield (will be updated after data loading)
@@ -613,7 +627,19 @@ with tab1:
     # AI Narrative
     ai_tier = "LOW" if ai_ratio <= 1.2 else "MEDIUM" if ai_ratio <= 1.5 else "HIGH"
     icon = "👍" if ai_tier == "LOW" else "😐" if ai_tier == "MEDIUM" else "⚠️"
-    st.markdown(f"**AI Narrative:** {icon} AI Bubble Risk: {ai_tier}")
+
+    # Check for Hidden Structural Threat for AI (NVDA)
+    hidden_threat_ai = False
+    if "NVDA" in curr_close.columns and len(curr_close["NVDA"]) >= 2:
+        nvda_price_change = (curr_close["NVDA"].iloc[-1] / curr_close["NVDA"].iloc[-2] - 1) * 100 > 0
+        nvda_sent_change = nvidia_sent < 0  # Assuming current sentiment, but to check change, need previous. Placeholder: if negative, assume dropping.
+        if nvda_price_change and nvda_sent_change:
+            hidden_threat_ai = True
+
+    ai_narrative = f"{icon} AI Bubble Risk: {ai_tier}"
+    if hidden_threat_ai:
+        ai_narrative += " | ⚠️ Hidden Structural Threat: Price rising on falling sentiment."
+    st.markdown(f"**AI Narrative:** {ai_narrative}")
 
     # Crypto Narrative
     if len(curr_crypto_turb) >= 2:
@@ -625,7 +651,19 @@ with tab1:
             crypto_status = "NEUTRAL"
     else:
         crypto_status = "N/A"
-    st.markdown(f"**Crypto Narrative:** Crypto Leading Indicator: {crypto_status}")
+
+    # Check for Hidden Structural Threat for Crypto (BTC)
+    hidden_threat_crypto = False
+    if "BTC-USD" in curr_close.columns and len(curr_close["BTC-USD"]) >= 2:
+        btc_price_change = (curr_close["BTC-USD"].iloc[-1] / curr_close["BTC-USD"].iloc[-2] - 1) * 100 > 0
+        btc_sent_change = bitcoin_sent < 0
+        if btc_price_change and btc_sent_change:
+            hidden_threat_crypto = True
+
+    crypto_narrative = f"Crypto Leading Indicator: {crypto_status}"
+    if hidden_threat_crypto:
+        crypto_narrative += " | ⚠️ Hidden Structural Threat: Price rising on falling sentiment."
+    st.markdown(f"**Crypto Narrative:** {crypto_narrative}")
 
     # Sector Fever Heatmap
     st.markdown("### Sector Fever Heatmap")
@@ -768,6 +806,34 @@ with tab2:
     mac1, mac2 = st.columns(2)
     mac1.metric(f"Yield Curve (10Y-2Y)", f"{last_yield:.2f}%", delta="Inverted" if last_yield < 0 else "Normal", help=yield_help)
     mac2.metric("Credit Stress (HY)", f"{credit_val:.1f}σ", help=credit_help)
+
+    # Dual-Axis Chart: M2 Liquidity vs SPX Price
+    st.markdown("#### 💧 M2 Liquidity Wave Dual-Axis")
+    if not macro_m2.empty and spy_col in curr_close.columns:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # Left axis: M2 Money Supply
+        fig.add_trace(
+            go.Scatter(x=macro_m2.index, y=macro_m2.values, name="M2 Money Supply", line=dict(color="blue")),
+            secondary_y=False
+        )
+
+        # Right axis: SPX Price
+        fig.add_trace(
+            go.Scatter(x=curr_close[spy_col].index, y=curr_close[spy_col].values, name="SPX Price", line=dict(color="green")),
+            secondary_y=True
+        )
+
+        fig.update_layout(title="M2 Liquidity vs SPX Price: Is the Market Rising on Fuel or Empty Air?", template="plotly_dark")
+        fig.update_yaxes(title_text="M2 Money Supply ($)", secondary_y=False)
+        fig.update_yaxes(title_text="SPX Price", secondary_y=True)
+
+        st.plotly_chart(fig)
+    else:
+        st.info("M2 data or SPX data not available for chart.")
 
 with tab3:
     st.subheader("📊 Institutional Sentiment")

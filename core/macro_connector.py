@@ -11,6 +11,14 @@ class MacroConnector:
     def __init__(self):
         self.fred = Fred(api_key=config.FRED_API_KEY)
         self.api_key = config.FRED_API_KEY
+
+        # Try to import OpenBB for macro data
+        try:
+            from openbb import obb
+            self.openbb_available = True
+            self.obb = obb
+        except ImportError:
+            self.openbb_available = False
         
     @st.cache_data(ttl=3600)
     def fetch_economic_calendar(_self):
@@ -148,6 +156,72 @@ class MacroConnector:
         except Exception as e:
             print(f"FinViz Sentiment Error: {e}")
             return 50.0 # Neutral fallback
+
+    @st.cache_data(ttl=86400)
+    def fetch_m2_money_supply(_self):
+        """
+        Fetches M2 Money Supply using OpenBB FRED.
+        Series: M2SL
+        Fallback: Static value $21.7T if OpenBB unavailable.
+        """
+        if _self.openbb_available:
+            try:
+                m2_data = _self.obb.macro.fred.series(series_id="M2SL").to_df()
+                if not m2_data.empty:
+                    return m2_data['value']
+            except Exception as e:
+                print(f"OpenBB M2 fetch failed: {e}. Using fallback.")
+        # Fallback
+        print("Using mock M2 fallback: $21.7T")
+        return pd.Series([21.7e12] * 100, index=pd.date_range(end=pd.Timestamp.now(), periods=100))
+
+    @st.cache_data(ttl=86400)
+    def fetch_cpi(_self):
+        """
+        Fetches CPI using OpenBB FRED.
+        Series: CPIAUCSL
+        Fallback: Static value 3.2% if OpenBB unavailable.
+        """
+        if _self.openbb_available:
+            try:
+                cpi_data = _self.obb.macro.fred.series(series_id="CPIAUCSL").to_df()
+                if not cpi_data.empty:
+                    return cpi_data['value']
+            except Exception as e:
+                print(f"OpenBB CPI fetch failed: {e}. Using fallback.")
+        # Fallback
+        print("Using mock CPI fallback: 3.2%")
+        return pd.Series([3.2] * 100, index=pd.date_range(end=pd.Timestamp.now(), periods=100))
+
+    @st.cache_data(ttl=3600)
+    def fetch_sentiment_nvidia(_self):
+        """
+        Fetches news sentiment for NVIDIA using OpenBB.
+        Returns compound score or neutral if unavailable.
+        """
+        if _self.openbb_available:
+            try:
+                sentiment_data = _self.obb.news.sentiment(query="NVIDIA", limit=10)
+                if sentiment_data and 'compound' in sentiment_data:
+                    return sentiment_data['compound']
+            except Exception as e:
+                print(f"OpenBB NVIDIA sentiment failed: {e}")
+        return 0.0  # Neutral
+
+    @st.cache_data(ttl=3600)
+    def fetch_sentiment_bitcoin(_self):
+        """
+        Fetches news sentiment for Bitcoin using OpenBB.
+        Returns compound score or neutral if unavailable.
+        """
+        if _self.openbb_available:
+            try:
+                sentiment_data = _self.obb.news.sentiment(query="Bitcoin", limit=10)
+                if sentiment_data and 'compound' in sentiment_data:
+                    return sentiment_data['compound']
+            except Exception as e:
+                print(f"OpenBB Bitcoin sentiment failed: {e}")
+        return 0.0  # Neutral
 
     @st.cache_data(ttl=3600)
     def get_polymarket_odds(_self):
