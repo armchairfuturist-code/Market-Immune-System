@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import datetime
 import re
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import config
 from core import data_loader, math_engine, macro_connector, cycle_engine, report_generator, cycle_playbook, smc_engine
 from core.vector_engine import VectorEngine
@@ -794,7 +796,6 @@ with tab2:
 
     # Yield Curve History
     st.markdown("#### 📈 Yield Curve History")
-    import plotly.graph_objects as go
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=curr_yield.index, y=curr_yield.values, mode='lines', name='10Y-2Y Spread', line=dict(color='blue')))
     fig.add_hrect(y0=-10, y1=0, fillcolor="red", opacity=0.2, line_width=0, annotation_text="Inversion Zone", annotation_position="top left")
@@ -810,9 +811,6 @@ with tab2:
     # Dual-Axis Chart: M2 Liquidity vs SPX Price
     st.markdown("#### 💧 M2 Liquidity Wave Dual-Axis")
     if not macro_m2.empty and spy_col in curr_close.columns:
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
-
         fig = make_subplots(specs=[[{"secondary_y": True}]])
 
         # Left axis: M2 Money Supply
